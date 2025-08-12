@@ -1,13 +1,17 @@
 package olox
+import "core:fmt"
 import "core:os"
 
 main :: proc() {
-
+	init_VM()
+	defer free_VM()
 	chunk := Chunk{}
-	write_chunk(&chunk, cast(u8)OpCode.OP_RETURN)
-	write_chunk(&chunk, cast(u8)OpCode.OP_RETURN)
-	write_chunk(&chunk, cast(u8)OpCode.OP_RETURN)
-	write_chunk(&chunk, cast(u8)OpCode.OP_RETURN)
-	disassemble_chunk(&chunk, "test chunk")
-	free_chunk(&chunk)
+	defer free_chunk(&chunk)
+
+
+	write_constant(&chunk, 1.2, 1)
+	write_chunk(&chunk, OpCode.RETURN, 2)
+
+	// disassemble_chunk(&chunk, "test")
+	interpret(&chunk)
 }
