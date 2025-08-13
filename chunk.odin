@@ -9,6 +9,11 @@ Chunk :: struct {
 OpCode :: enum u8 {
 	CONSTANT,
 	CONSTANT_LONG,
+	NEGATE,
+	ADD,
+	SUBTRACT,
+	MULTIPLY,
+	DIVIDE,
 	RETURN,
 }
 

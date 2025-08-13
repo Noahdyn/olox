@@ -23,6 +23,16 @@ disassemble_instruction :: proc(chunk: ^Chunk, offset: int) -> int {
 	switch (instruction) {
 	case .RETURN:
 		return simple_instruction("OP_RETURN", offset)
+	case .NEGATE:
+		return simple_instruction("OP_NEGATE", offset)
+	case .ADD:
+		return simple_instruction("OP_ADD", offset)
+	case .SUBTRACT:
+		return simple_instruction("OP_SUBTRACT", offset)
+	case .DIVIDE:
+		return simple_instruction("OP_DIVIDE", offset)
+	case .MULTIPLY:
+		return simple_instruction("OP_MULTIPLY", offset)
 	case .CONSTANT:
 		return constant_instruction("OP_CONSTANT", chunk, offset)
 	case .CONSTANT_LONG:
