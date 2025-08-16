@@ -3,20 +3,21 @@ package olox
 import "core:fmt"
 import "core:mem"
 
-compile :: proc(source: string) {
+compile :: proc(source: string, chunk: ^Chunk) -> {
 	init_scanner(source)
-	line := -1
-	for {
-		token := scan_token()
-		if token.line != line {
-			fmt.printf("%4d ", token.line)
-			line = token.line
-		} else {
-			fmt.printf("	|")
-		}
-		str := string(mem.ptr_to_bytes(token.start, token.length))
-		fmt.printf("{} '{}'\n", token.type, str)
+	advance()
+	expression() 
+	consume(.EOF, "Expect end of expression.")
 
-		if token.type == .EOF do break
+}
+
+advance :: proc() {
+parser.previous = parser.current 
+
+	for {
+parser.current = scan_token()
+		if parser.current.type != .ERROR do break 
+
+		error_at_current(parser.current.start)
 	}
 }

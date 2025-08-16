@@ -48,6 +48,7 @@ write_chunk_byte :: proc(chunk: ^Chunk, byte: u8, line: int) {
 free_chunk :: proc(chunk: ^Chunk) {
 	delete(chunk.code)
 	delete(chunk.constants)
+	delete(chunk.lines)
 }
 
 write_constant :: proc(chunk: ^Chunk, val: Value, line: int) {

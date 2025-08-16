@@ -34,8 +34,18 @@ free_VM :: proc() {
 }
 
 interpret :: proc(source: string) -> InterpretResult {
-	compile(source)
-	return .OK
+	chunk: Chunk
+	defer free_chunk(&chunk)
+
+	if !compile(source, &chunk) {
+		free_chunk(&chunk)
+		return .COMPILE_ERROR
+	}
+	vm.chunk = &chunk
+	vm.ip = raw_data(vm.chunk.code)
+	res := run()
+
+	return res
 }
 
 push_stack :: proc(val: Value) {
@@ -122,12 +132,3 @@ read_byte :: #force_inline proc() -> u8 {
 read_constant :: #force_inline proc() -> Value {
 	return vm.chunk.constants[read_byte()]
 }
-
-//TODO: wahrscheinlich loeschen ist macro in c
-// binary_op :: #force_inline proc(_: op) {
-//
-// 	b: double = pop()
-// 	a: double = pop()
-// 	push(a op b)
-//
-// }
