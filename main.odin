@@ -1,6 +1,9 @@
 package olox
+import "core:bufio"
 import "core:fmt"
+import "core:io"
 import "core:os"
+import "core:strings"
 import "core:time"
 
 main :: proc() {
@@ -19,17 +22,19 @@ main :: proc() {
 }
 
 repl :: proc() {
-	line: [1024]byte
-
+	line: [1024]u8
+	reader: bufio.Reader
+	bufio.reader_init_with_buf(&reader, io.to_reader(os.stream_from_handle(os.stdin)), line[:])
 	for {
-		fmt.printf(">")
-		if (true) {
-			fmt.printf("\n")
+		fmt.printf("> ")
+
+		line, err := bufio.reader_read_slice(&reader, '\n')
+		if err != nil {
+			fmt.println(err)
 			break
 		}
-		interpret(line)
+		interpret(string(line[:]))
 	}
-
 }
 
 run_file :: proc(path: string) {

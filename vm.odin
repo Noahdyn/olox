@@ -19,7 +19,7 @@ InterpretResult :: enum {
 }
 
 vm: VM
-DEBUG_TRACE_EXECUTION := true
+DEBUG_TRACE_EXECUTION := false
 
 init_VM :: proc() {
 	reset_stack()
@@ -38,7 +38,6 @@ interpret :: proc(source: string) -> InterpretResult {
 	defer free_chunk(&chunk)
 
 	if !compile(source, &chunk) {
-		free_chunk(&chunk)
 		return .COMPILE_ERROR
 	}
 	vm.chunk = &chunk

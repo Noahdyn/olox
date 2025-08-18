@@ -1,5 +1,6 @@
 package olox
 
+import "core:fmt"
 import "core:mem"
 
 Scanner :: struct {
@@ -71,7 +72,7 @@ init_scanner :: proc(source: string) {
 	scanner.line = 1
 }
 
-advance :: proc() -> u8 {
+advance_scanner :: proc() -> u8 {
 	c := scanner.current^
 	scanner.current = mem.ptr_offset(scanner.current, 1)
 	return c
@@ -100,7 +101,7 @@ scan_token :: proc() -> Token {
 	scanner.start = scanner.current
 	if (is_at_end()) do return make_token(.EOF)
 
-	c := advance()
+	c := advance_scanner()
 
 	if is_digit(c) do return number_token()
 	if is_alpha(c) do return identifier_token()
@@ -159,14 +160,14 @@ skip_white_space :: proc() {
 
 		switch c {
 		case ' ', '\r', '\t':
-			advance()
+			advance_scanner()
 		case '/':
 			if peek_next() == '/' {
-				for peek() != '\n' && !is_at_end() do advance()
+				for peek() != '\n' && !is_at_end() do advance_scanner()
 			} else do return
 		case '\n':
 			scanner.line += 1
-			advance()
+			advance_scanner()
 		case:
 			return
 		}
@@ -197,22 +198,22 @@ error_token :: proc(msg: string) -> Token {
 string_token :: proc() -> Token {
 	for peek() != '"' && !is_at_end() {
 		if peek() == '\n' do scanner.line += 1
-		advance()
+		advance_scanner()
 	}
 	if is_at_end() do return error_token("Unterminated string.")
 
 	//closing quote
-	advance()
+	advance_scanner()
 	return make_token(.STRING)
 }
 
 number_token :: proc() -> Token {
-	for is_digit(peek()) do advance()
+	for is_digit(peek()) do advance_scanner()
 
 	if peek() == '.' && is_digit(peek_next()) {
 		//consume the '.'
-		advance()
-		for is_digit(peek()) do advance()
+		advance_scanner()
+		for is_digit(peek()) do advance_scanner()
 	}
 
 	return make_token(.NUMBER)
@@ -221,7 +222,7 @@ number_token :: proc() -> Token {
 
 identifier_token :: proc() -> Token {
 
-	for is_alpha(peek()) || is_digit(peek()) do advance()
+	for is_alpha(peek()) || is_digit(peek()) do advance_scanner()
 	return make_token(identifier_type())
 }
 
