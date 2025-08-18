@@ -46,31 +46,31 @@ rules: [TokenType]ParseRule = {
 	.SEMICOLON     = {nil, nil, .NONE},
 	.SLASH         = {nil, binary, .FACTOR},
 	.STAR          = {nil, binary, .FACTOR},
-	.BANG          = {nil, nil, .NONE}, // Add all missing ones
-	.BANG_EQUAL    = {nil, nil, .NONE},
+	.BANG          = {unary, nil, .NONE},
+	.BANG_EQUAL    = {nil, binary, .EQUALITY},
 	.EQUAL         = {nil, nil, .NONE},
-	.EQUAL_EQUAL   = {nil, nil, .NONE},
-	.GREATER       = {nil, nil, .NONE},
-	.GREATER_EQUAL = {nil, nil, .NONE},
-	.LESS          = {nil, nil, .NONE},
-	.LESS_EQUAL    = {nil, nil, .NONE},
+	.EQUAL_EQUAL   = {nil, binary, .COMPARISON},
+	.GREATER       = {nil, binary, .COMPARISON},
+	.GREATER_EQUAL = {nil, binary, .COMPARISON},
+	.LESS          = {nil, binary, .COMPARISON},
+	.LESS_EQUAL    = {nil, binary, .COMPARISON},
 	.IDENTIFIER    = {nil, nil, .NONE},
 	.STRING        = {nil, nil, .NONE},
 	.NUMBER        = {number, nil, .NONE},
 	.AND           = {nil, nil, .NONE},
 	.CLASS         = {nil, nil, .NONE},
 	.ELSE          = {nil, nil, .NONE},
-	.FALSE         = {nil, nil, .NONE},
+	.FALSE         = {literal, nil, .NONE},
 	.FOR           = {nil, nil, .NONE},
 	.FUN           = {nil, nil, .NONE},
 	.IF            = {nil, nil, .NONE},
-	.NIL           = {nil, nil, .NONE},
+	.NIL           = {literal, nil, .NONE},
 	.OR            = {nil, nil, .NONE},
 	.PRINT         = {nil, nil, .NONE},
 	.RETURN        = {nil, nil, .NONE},
 	.SUPER         = {nil, nil, .NONE},
 	.THIS          = {nil, nil, .NONE},
-	.TRUE          = {nil, nil, .NONE},
+	.TRUE          = {literal, nil, .NONE},
 	.VAR           = {nil, nil, .NONE},
 	.WHILE         = {nil, nil, .NONE},
 	.ERROR         = {nil, nil, .NONE},
@@ -140,7 +140,7 @@ grouping :: proc() {
 
 number :: proc() {
 	value, _ := strconv.parse_f64(token_text(parser.previous))
-	emit_constant(Value(value))
+	emit_constant(number_val(value))
 }
 
 unary :: proc() {
@@ -153,6 +153,8 @@ unary :: proc() {
 	#partial switch operator_type {
 	case .MINUS:
 		emit_byte(u8(OpCode.NEGATE))
+	case .BANG:
+		emit_byte(u8(OpCode.NOT))
 	case:
 		return
 	}
@@ -173,10 +175,33 @@ binary :: proc() {
 		emit_byte(u8(OpCode.MULTIPLY))
 	case .SLASH:
 		emit_byte(u8(OpCode.DIVIDE))
+	case .BANG_EQUAL:
+		emit_bytes(u8(OpCode.EQUAL), u8(OpCode.NOT))
+	case .EQUAL_EQUAL:
+		emit_byte(u8(OpCode.EQUAL))
+	case .GREATER:
+		emit_byte(u8(OpCode.GREATER))
+	case .LESS:
+		emit_byte(u8(OpCode.LESS))
+	case .GREATER_EQUAL:
+		emit_bytes(u8(OpCode.LESS), u8(OpCode.NOT))
+	case .LESS_EQUAL:
+		emit_bytes(u8(OpCode.GREATER), u8(OpCode.NOT))
 	case:
 		return
 	}
+}
 
+literal :: proc() {
+	#partial switch parser.previous.type {
+	case .FALSE:
+		emit_byte(u8(OpCode.FALSE))
+	case .TRUE:
+		emit_byte(u8(OpCode.TRUE))
+	case .NIL:
+		emit_byte(u8(OpCode.NIL))
+
+	}
 }
 
 parse_precedence :: proc(precedence: Precedence) {

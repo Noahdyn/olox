@@ -29,6 +29,15 @@ reset_stack :: proc() {
 	clear(&vm.stack)
 }
 
+runtime_error :: proc(format: string, args: ..any) {
+	fmt.eprintf(format, ..args)
+	fmt.eprintln()
+	instruction := uintptr(vm.ip) - uintptr(raw_data(vm.chunk.code)) - 1
+	line := get_line(vm.chunk, int(instruction))
+	fmt.eprintf("[line %d] in script\n", line)
+	reset_stack()
+}
+
 free_VM :: proc() {
 	delete(vm.stack)
 }
@@ -68,22 +77,19 @@ run :: proc() -> InterpretResult {
 				print_value(val)
 				fmt.printf(" ]")
 			}
-
-
 			fmt.printf("\n")
 		}
 		instruction := read_byte()
 		switch (instruction) {
 		case u8(OpCode.RETURN):
 			print_value(pop_stack())
-			fmt.printf("/n")
+			fmt.printf("\n")
 			return InterpretResult.OK
 		case u8(OpCode.CONSTANT):
 			constant := read_constant()
 			push_stack(constant)
 			print_value(constant)
 			fmt.printf("\n")
-			break
 		case u8(OpCode.CONSTANT_LONG):
 			byte1 := read_byte()
 			byte2 := read_byte()
@@ -93,31 +99,79 @@ run :: proc() -> InterpretResult {
 			push_stack(constant)
 			print_value(constant)
 			fmt.printf("\n")
-			break
 		case u8(OpCode.NEGATE):
 			last_elem := &vm.stack[len(vm.stack) - 1]
-			last_elem^ = -last_elem^
-			break
+			if !is_number(last_elem^) {
+				runtime_error("Operand must be a number.")
+				return .RUNTIME_ERROR
+			}
+			last_elem^ = number_val(-as_number(last_elem^))
 		case u8(OpCode.ADD):
-			b := f64(pop_stack())
-			a := f64(pop_stack())
-			push_stack(Value(a + b))
-			break
+			if !is_number(peek_vm(0)) || !is_number(peek_vm(1)) {
+				runtime_error("Operands must be numbers.")
+				return .RUNTIME_ERROR
+			}
+			b := as_number(pop_stack())
+			a := as_number(pop_stack())
+			push_stack(number_val(a + b))
 		case u8(OpCode.SUBTRACT):
-			b := f64(pop_stack())
-			a := f64(pop_stack())
-			push_stack(Value(a - b))
-			break
+			if !is_number(peek_vm(0)) || !is_number(peek_vm(1)) {
+				runtime_error("Operands must be numbers.")
+				return .RUNTIME_ERROR
+			}
+			b := as_number(pop_stack())
+			a := as_number(pop_stack())
+			push_stack(number_val(a - b))
 		case u8(OpCode.MULTIPLY):
-			b := f64(pop_stack())
-			a := f64(pop_stack())
-			push_stack(Value(a * b))
-			break
+			if !is_number(peek_vm(0)) || !is_number(peek_vm(1)) {
+				runtime_error("Operands must be numbers.")
+				return .RUNTIME_ERROR
+			}
+			b := as_number(pop_stack())
+			a := as_number(pop_stack())
+			push_stack(number_val(a * b))
 		case u8(OpCode.DIVIDE):
-			b := f64(pop_stack())
-			a := f64(pop_stack())
-			push_stack(Value(a / b))
-			break
+			if !is_number(peek_vm(0)) || !is_number(peek_vm(1)) {
+				runtime_error("Operands must be numbers.")
+				return .RUNTIME_ERROR
+			}
+			b := as_number(pop_stack())
+			a := as_number(pop_stack())
+			push_stack(number_val(a / b))
+		case u8(OpCode.NIL):
+			push_stack(nil_val())
+		case u8(OpCode.TRUE):
+			push_stack(bool_val(true))
+		case u8(OpCode.FALSE):
+			push_stack(bool_val(false))
+		case u8(OpCode.NOT):
+			last_elem := &vm.stack[len(vm.stack) - 1]
+			if !is_bool(last_elem^) {
+				runtime_error("Operand must be boolean.")
+				return .RUNTIME_ERROR
+			}
+			last_elem^ = bool_val(is_falsey(last_elem^))
+		case u8(OpCode.EQUAL):
+			b := pop_stack()
+			a := pop_stack()
+			push_stack(bool_val(values_equal(a, b)))
+		case u8(OpCode.GREATER):
+			if !is_number(peek_vm(0)) || !is_number(peek_vm(1)) {
+				runtime_error("Operands must be numbers.")
+				return .RUNTIME_ERROR
+			}
+			b := as_number(pop_stack())
+			a := as_number(pop_stack())
+			push_stack(bool_val(a > b))
+		case u8(OpCode.LESS):
+			if !is_number(peek_vm(0)) || !is_number(peek_vm(1)) {
+				runtime_error("Operands must be numbers.")
+				return .RUNTIME_ERROR
+			}
+			b := as_number(pop_stack())
+			a := as_number(pop_stack())
+			push_stack(bool_val(a < b))
+
 		}
 	}
 }
@@ -130,4 +184,26 @@ read_byte :: #force_inline proc() -> u8 {
 
 read_constant :: #force_inline proc() -> Value {
 	return vm.chunk.constants[read_byte()]
+}
+
+peek_vm :: proc(distance: int) -> Value {
+	return vm.stack[len(vm.stack) - 1 - distance]
+}
+
+is_falsey :: proc(val: Value) -> bool {
+	return is_nil(val) || (is_bool(val) && !as_bool(val))
+}
+
+values_equal :: proc(a, b: Value) -> bool {
+	if a.type != b.type do return false
+	switch a.type {
+	case .BOOL:
+		return as_bool(a) == as_bool(b)
+	case .NIL:
+		return true
+	case .NUMBER:
+		return as_number(a) == as_number(b)
+	case:
+		return false // Unreachable.
+	}
 }

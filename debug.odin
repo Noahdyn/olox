@@ -37,6 +37,20 @@ disassemble_instruction :: proc(chunk: ^Chunk, offset: int) -> int {
 		return constant_instruction("OP_CONSTANT", chunk, offset)
 	case .CONSTANT_LONG:
 		return long_constant_instruction("OP_CONSTANT_LONG", chunk, offset)
+	case .NIL:
+		return simple_instruction("OP_NIL", offset)
+	case .TRUE:
+		return simple_instruction("OP_TRUE", offset)
+	case .FALSE:
+		return simple_instruction("OP_FALSE", offset)
+	case .NOT:
+		return simple_instruction("OP_NOT", offset)
+	case .EQUAL:
+		return simple_instruction("OP_EQUAL", offset)
+	case .GREATER:
+		return simple_instruction("OP_EQUAL", offset)
+	case .LESS:
+		return simple_instruction("OP_EQUAL", offset)
 	case:
 		fmt.println("Unknown opcode ", instruction)
 		return offset + 1
