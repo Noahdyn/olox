@@ -6,6 +6,7 @@ ValueType :: enum {
 	BOOL,
 	NIL,
 	NUMBER,
+	OBJ,
 }
 
 Value :: struct {
@@ -13,6 +14,7 @@ Value :: struct {
 	variant: union {
 		bool,
 		f64,
+		^Obj,
 	},
 }
 
@@ -24,6 +26,8 @@ print_value :: proc(value: Value) {
 		fmt.printf(as_bool(value) ? "true" : "false")
 	case .NIL:
 		fmt.printf("nil")
+	case .OBJ:
+		fmt.printf("obj")
 	}
 }
 
@@ -39,12 +43,21 @@ nil_val :: #force_inline proc() -> Value {
 	return Value{.NIL, 0}
 }
 
+
+obj_val :: #force_inline proc(object: ^Obj) -> Value {
+	return Value{.OBJ, object}
+}
+
 as_bool :: #force_inline proc(val: Value) -> bool {
 	return val.variant.(bool)
 }
 
 as_number :: #force_inline proc(val: Value) -> f64 {
 	return val.variant.(f64)
+}
+
+as_obj :: #force_inline proc(val: Value) -> ^Obj {
+	return val.variant.(^Obj)
 }
 
 is_bool :: #force_inline proc(val: Value) -> bool {
@@ -57,4 +70,8 @@ is_number :: #force_inline proc(val: Value) -> bool {
 
 is_nil :: #force_inline proc(val: Value) -> bool {
 	return val.type == .NIL
+}
+
+is_obj :: #force_inline proc(val: Value) -> bool {
+	return val.type == .OBJ
 }
