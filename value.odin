@@ -27,7 +27,7 @@ print_value :: proc(value: Value) {
 	case .NIL:
 		fmt.printf("nil")
 	case .OBJ:
-		fmt.printf("obj")
+		print_object(value)
 	}
 }
 

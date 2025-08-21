@@ -55,7 +55,7 @@ rules: [TokenType]ParseRule = {
 	.LESS          = {nil, binary, .COMPARISON},
 	.LESS_EQUAL    = {nil, binary, .COMPARISON},
 	.IDENTIFIER    = {nil, nil, .NONE},
-	.STRING        = {nil, nil, .NONE},
+	.STRING        = {string_proc, nil, .NONE},
 	.NUMBER        = {number, nil, .NONE},
 	.AND           = {nil, nil, .NONE},
 	.CLASS         = {nil, nil, .NONE},
@@ -141,6 +141,13 @@ grouping :: proc() {
 number :: proc() {
 	value, _ := strconv.parse_f64(token_text(parser.previous))
 	emit_constant(number_val(value))
+}
+
+string_proc :: proc() {
+	string_data := string(
+		mem.slice_ptr(mem.ptr_offset(parser.previous.start, 1), parser.previous.length - 2),
+	)
+	emit_constant(obj_val(copy_string(string_data)))
 }
 
 unary :: proc() {

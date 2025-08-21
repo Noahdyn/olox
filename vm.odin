@@ -2,6 +2,7 @@ package olox
 
 import "core:fmt"
 import "core:mem"
+import "core:strings"
 
 
 VM :: struct {
@@ -10,6 +11,7 @@ VM :: struct {
 	ip:             ^u8,
 	stack_capacity: int,
 	stack:          [dynamic]Value,
+	objects:        ^Obj,
 }
 
 InterpretResult :: enum {
@@ -40,6 +42,24 @@ runtime_error :: proc(format: string, args: ..any) {
 
 free_VM :: proc() {
 	delete(vm.stack)
+	free_objects()
+}
+
+free_objects :: proc() {
+	object := vm.objects
+	for object != nil {
+		next := object.next
+		free_object(object)
+		object = next
+	}
+}
+
+free_object :: proc(object: ^Obj) {
+	switch object.type {
+	case .String:
+		o := cast(^ObjString)object
+		free(o)
+	}
 }
 
 interpret :: proc(source: string) -> InterpretResult {
@@ -107,13 +127,17 @@ run :: proc() -> InterpretResult {
 			}
 			last_elem^ = number_val(-as_number(last_elem^))
 		case u8(OpCode.ADD):
-			if !is_number(peek_vm(0)) || !is_number(peek_vm(1)) {
+			if is_string(peek_vm(0)) && is_string(peek_vm(1)) {
+				concatenate()
+			} else if is_number(peek_vm(0)) || is_number(peek_vm(1)) {
+				b := as_number(pop_stack())
+				a := as_number(pop_stack())
+				push_stack(number_val(a + b))
+
+			} else {
 				runtime_error("Operands must be numbers.")
 				return .RUNTIME_ERROR
 			}
-			b := as_number(pop_stack())
-			a := as_number(pop_stack())
-			push_stack(number_val(a + b))
 		case u8(OpCode.SUBTRACT):
 			if !is_number(peek_vm(0)) || !is_number(peek_vm(1)) {
 				runtime_error("Operands must be numbers.")
@@ -174,6 +198,13 @@ run :: proc() -> InterpretResult {
 
 		}
 	}
+}
+
+concatenate :: proc() {
+	b := cast(^ObjString)as_obj(pop_stack())
+	a := cast(^ObjString)as_obj(pop_stack())
+	result := allocate_string(strings.concatenate({a.str, b.str}))
+	push_stack(obj_val(result))
 }
 
 read_byte :: #force_inline proc() -> u8 {
