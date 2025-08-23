@@ -38,7 +38,7 @@ allocate_string :: proc(str: string, hash: u32) -> ^ObjString {
 	s := allocate_obj(ObjString, .String)
 	s.str = str
 	s.hash = hash
-	table_set(&vm.strings, s, nil_val())
+	table_set(&vm.strings, obj_val(s), nil_val())
 	return s
 }
 

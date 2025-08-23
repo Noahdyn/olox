@@ -12,7 +12,7 @@ Table :: struct {
 }
 
 Entry :: struct {
-	key:   ^ObjString,
+	key:   Value,
 	value: Value,
 }
 
@@ -22,14 +22,34 @@ free_table :: proc(table: ^Table) {
 	table.capacity = 0
 }
 
-find_entry :: proc(entries: []Entry, capacity: int, key: ^ObjString) -> ^Entry {
-	idx := int(key.hash) % capacity
+hash_value :: proc(val: Value) -> u32 {
+	switch val.type {
+	case .NIL:
+		return 0
+	case .BOOL:
+		return u32(1) if as_bool(val) else u32(0)
+	case .NUMBER:
+		bits := transmute(u64)as_number(val)
+		return u32(bits) ~ u32(bits >> 32)
+	case .OBJ:
+		obj := as_obj(val)
+		switch obj.type {
+		case .String:
+			str_obj := cast(^ObjString)obj
+			return str_obj.hash
+		}
+	}
+	return 0
+}
+
+find_entry :: proc(entries: []Entry, capacity: int, key: Value) -> ^Entry {
+	idx := int(hash_value(key)) % capacity
 	tombstone: ^Entry = nil
 
 	for {
 		entry := &entries[idx]
 
-		if entry.key == nil {
+		if is_nil(entry.key) {
 			if is_nil(entry.value) {
 				// empty entry 
 				return tombstone != nil ? tombstone : entry
@@ -37,21 +57,21 @@ find_entry :: proc(entries: []Entry, capacity: int, key: ^ObjString) -> ^Entry {
 				// we found a tombstone 
 				if tombstone == nil do tombstone = entry
 			}
-		} else if entry.key == key {
+		} else if values_equal(entry.key, key) {
 			return entry
 		}
 		idx = (idx + 1) % capacity
 	}
 }
 
-table_set :: proc(table: ^Table, key: ^ObjString, value: Value) -> bool {
+table_set :: proc(table: ^Table, key: Value, value: Value) -> bool {
 	if f64(table.count + 1) > f64(table.capacity) * TABLE_MAX_LOAD {
 		capacity := grow_capacity(table.capacity)
 		adjust_capacity(table, capacity)
 	}
 
 	entry := find_entry(table.entries, table.capacity, key)
-	is_new_key := entry.key == nil
+	is_new_key := is_nil(entry.key)
 	if is_new_key && is_nil(entry.value) do table.count += 1
 
 	entry.key = key
@@ -59,13 +79,13 @@ table_set :: proc(table: ^Table, key: ^ObjString, value: Value) -> bool {
 	return is_new_key
 }
 
-table_delete :: proc(table: ^Table, key: ^ObjString) -> bool {
+table_delete :: proc(table: ^Table, key: Value) -> bool {
 	if table.count == 0 do return false
 
 	entry := find_entry(table.entries, table.capacity, key)
-	if entry.key == nil do return false
+	if is_nil(entry.key) do return false
 
-	entry.key = nil
+	entry.key = nil_val()
 	entry.value = bool_val(true)
 	return true
 }
@@ -77,7 +97,7 @@ grow_capacity :: proc(capacity: int) -> int {
 adjust_capacity :: proc(table: ^Table, capacity: int) {
 	entries := make([]Entry, capacity)
 	for i in 0 ..< capacity {
-		entries[i].key = nil
+		entries[i].key = nil_val()
 		entries[i].value = nil_val()
 	}
 
@@ -85,7 +105,7 @@ adjust_capacity :: proc(table: ^Table, capacity: int) {
 
 	for i := 0; i < table.capacity; i += 1 {
 		entry := table.entries[i]
-		if entry.key == nil do continue
+		if is_nil(entry.key) do continue
 
 		dest := find_entry(entries, capacity, entry.key)
 		dest.key = entry.key
@@ -103,7 +123,7 @@ table_add_all :: proc(from, to: ^Table) {
 	for i := 0; i < from.capacity; i += 1 {
 
 		entry := from.entries[i]
-		if entry.key != nil do table_set(to, entry.key, entry.value)
+		if !is_nil(entry.key) do table_set(to, entry.key, entry.value)
 	}
 }
 
@@ -112,22 +132,25 @@ table_find_string :: proc(table: ^Table, str: string, hash: u32) -> ^ObjString {
 	idx := hash % u32(table.capacity)
 	for {
 		entry := table.entries[idx]
-		if entry.key == nil {
+		if is_nil(entry.key) {
 			if is_nil(entry.value) do return nil
-		} else if len(entry.key.str) == len(str) &&
-		   entry.key.hash == hash &&
-		   mem.compare(transmute([]u8)entry.key.str, transmute([]u8)str) == 0 {
-			return entry.key
+		} else if is_string(entry.key) {
+			str_obj := cast(^ObjString)as_obj(entry.key)
+			if len(str_obj.str) == len(str) &&
+			   str_obj.hash == hash &&
+			   mem.compare(transmute([]u8)str_obj.str, transmute([]u8)str) == 0 {
+				return str_obj
+			}
 		}
 		idx = (idx + 1) % u32(table.capacity)
 	}
 }
 
-table_get :: proc(table: ^Table, key: ^ObjString) -> (Value, bool) {
+table_get :: proc(table: ^Table, key: Value) -> (Value, bool) {
 	if table.count == 0 do return nil_val(), false
 
 	entry := find_entry(table.entries, table.capacity, key)
-	if entry.key == nil do return nil_val(), false
+	if is_nil(entry.key) do return nil_val(), false
 
 	value := entry.value
 	return value, true
