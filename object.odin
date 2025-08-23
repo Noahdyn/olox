@@ -15,6 +15,7 @@ Obj :: struct {
 ObjString :: struct {
 	using obj: Obj,
 	str:       string,
+	hash:      u32,
 }
 
 is_string :: #force_inline proc(val: Value) -> bool {
@@ -27,13 +28,27 @@ is_obj_type :: #force_inline proc(val: Value, type: ObjType) -> bool {
 
 copy_string :: proc(str: string) -> ^ObjString {
 	s := strings.clone(str)
-	return allocate_string(s)
+	hash := hash_string(s)
+	interned := table_find_string(&vm.strings, s, hash)
+	if interned != nil do return interned
+	return allocate_string(s, hash)
 }
 
-allocate_string :: proc(str: string) -> ^ObjString {
+allocate_string :: proc(str: string, hash: u32) -> ^ObjString {
 	s := allocate_obj(ObjString, .String)
 	s.str = str
+	s.hash = hash
+	table_set(&vm.strings, s, nil_val())
 	return s
+}
+
+hash_string :: proc(str: string) -> u32 {
+	hash: u32 = 2166136261
+	for i := 0; i < len(str); i += 1 {
+		hash ~= u32(str[i])
+		hash *= 16777619
+	}
+	return hash
 }
 
 allocate_obj :: proc($T: typeid, type: ObjType) -> ^T {

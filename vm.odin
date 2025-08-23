@@ -11,6 +11,7 @@ VM :: struct {
 	ip:             ^u8,
 	stack_capacity: int,
 	stack:          [dynamic]Value,
+	strings:        Table,
 	objects:        ^Obj,
 }
 
@@ -41,6 +42,7 @@ runtime_error :: proc(format: string, args: ..any) {
 }
 
 free_VM :: proc() {
+	free_table(&vm.strings)
 	delete(vm.stack)
 	free_objects()
 }
@@ -108,8 +110,6 @@ run :: proc() -> InterpretResult {
 		case u8(OpCode.CONSTANT):
 			constant := read_constant()
 			push_stack(constant)
-			print_value(constant)
-			fmt.printf("\n")
 		case u8(OpCode.CONSTANT_LONG):
 			byte1 := read_byte()
 			byte2 := read_byte()
@@ -117,8 +117,6 @@ run :: proc() -> InterpretResult {
 			constant_index := int(byte1) << 16 | int(byte2) << 8 | int(byte3)
 			constant := vm.chunk.constants[constant_index]
 			push_stack(constant)
-			print_value(constant)
-			fmt.printf("\n")
 		case u8(OpCode.NEGATE):
 			last_elem := &vm.stack[len(vm.stack) - 1]
 			if !is_number(last_elem^) {
@@ -203,7 +201,9 @@ run :: proc() -> InterpretResult {
 concatenate :: proc() {
 	b := cast(^ObjString)as_obj(pop_stack())
 	a := cast(^ObjString)as_obj(pop_stack())
-	result := allocate_string(strings.concatenate({a.str, b.str}))
+	new_string := strings.concatenate({a.str, b.str})
+	hash := hash_string(new_string)
+	result := allocate_string(new_string, hash)
 	push_stack(obj_val(result))
 }
 
@@ -227,13 +227,15 @@ is_falsey :: proc(val: Value) -> bool {
 
 values_equal :: proc(a, b: Value) -> bool {
 	if a.type != b.type do return false
-	switch a.type {
+	#partial switch a.type {
 	case .BOOL:
 		return as_bool(a) == as_bool(b)
 	case .NIL:
 		return true
 	case .NUMBER:
 		return as_number(a) == as_number(b)
+	case .OBJ:
+		return as_obj(a) == as_obj(b)
 	case:
 		return false // Unreachable.
 	}
