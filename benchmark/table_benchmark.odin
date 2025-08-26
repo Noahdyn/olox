@@ -50,8 +50,8 @@ using olox
 
 	}
 
-	 print_benchmark_table("Insertion (ms)", set_times[:])
-	print_benchmark_table("Lookup (ms)", get_times[:])
+	 print_benchmark_table("Insertion (ms per 100k inserts)", set_times[:])
+	print_benchmark_table("Lookup (ms per 100k lookups)", get_times[:])
 
 }
 

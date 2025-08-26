@@ -11,6 +11,7 @@ VM :: struct {
 	ip:             ^u8,
 	stack_capacity: int,
 	stack:          [dynamic]Value,
+	globals:        Table,
 	strings:        Table,
 	objects:        ^Obj,
 }
@@ -43,6 +44,7 @@ runtime_error :: proc(format: string, args: ..any) {
 
 free_VM :: proc() {
 	free_table(&vm.strings)
+	free_table(&vm.globals)
 	delete(vm.stack)
 	free_objects()
 }
@@ -104,8 +106,6 @@ run :: proc() -> InterpretResult {
 		instruction := read_byte()
 		switch (instruction) {
 		case u8(OpCode.RETURN):
-			print_value(pop_stack())
-			fmt.printf("\n")
 			return InterpretResult.OK
 		case u8(OpCode.CONSTANT):
 			constant := read_constant()
@@ -193,6 +193,50 @@ run :: proc() -> InterpretResult {
 			b := as_number(pop_stack())
 			a := as_number(pop_stack())
 			push_stack(bool_val(a < b))
+		case u8(OpCode.PRINT):
+			print_value(pop_stack())
+			fmt.println()
+		case u8(OpCode.POP):
+			pop_stack()
+		case u8(OpCode.DEFINE_GLOBAL):
+			name := read_constant()
+			table_set(&vm.globals, name, peek_vm(0))
+			pop_stack()
+		case u8(OpCode.DEFINE_GLOBAL_LONG):
+			byte1 := read_byte()
+			byte2 := read_byte()
+			byte3 := read_byte()
+			name_index := int(byte1) << 16 | int(byte2) << 8 | int(byte3)
+			name := vm.chunk.constants[name_index]
+			table_set(&vm.globals, name, peek_vm(0))
+			pop_stack()
+		case u8(OpCode.GET_GLOBAL):
+			key := read_constant()
+			value, ok := table_get(&vm.globals, key)
+			if !ok {
+				runtime_error("Undefined variable '%s'", (cast(^ObjString)as_obj(key)).str)
+				return .RUNTIME_ERROR
+			}
+			push_stack(value)
+		case u8(OpCode.GET_GLOBAL_LONG):
+			byte1 := read_byte()
+			byte2 := read_byte()
+			byte3 := read_byte()
+			key_index := int(byte1) << 16 | int(byte2) << 8 | int(byte3)
+			key := vm.chunk.constants[key_index]
+			value, ok := table_get(&vm.globals, key)
+			if !ok {
+				runtime_error("Undefined variable '%s'", (cast(^ObjString)as_obj(key)).str)
+				return .RUNTIME_ERROR
+			}
+			push_stack(value)
+		case u8(OpCode.SET_GLOBAL):
+			key := read_constant()
+			if table_set(&vm.globals, key, peek_vm(0)) {
+				table_delete(&vm.globals, key)
+				runtime_error("Undefined variable '%s'.", (cast(^ObjString)as_obj(key)).str)
+				return .RUNTIME_ERROR
+			}
 
 		}
 	}
@@ -215,6 +259,10 @@ read_byte :: #force_inline proc() -> u8 {
 
 read_constant :: #force_inline proc() -> Value {
 	return vm.chunk.constants[read_byte()]
+}
+
+read_string :: #force_inline proc() -> ^ObjString {
+	return cast(^ObjString)as_obj(read_constant())
 }
 
 peek_vm :: proc(distance: int) -> Value {

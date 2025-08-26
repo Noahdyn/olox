@@ -6,7 +6,7 @@ import "core:strconv"
 
 DEBUG_PRINT_CODE :: false
 
-ParseFn :: proc()
+ParseFn :: proc(can_assign: bool)
 
 Parser :: struct {
 	current, previous: Token,
@@ -54,7 +54,7 @@ rules: [TokenType]ParseRule = {
 	.GREATER_EQUAL = {nil, binary, .COMPARISON},
 	.LESS          = {nil, binary, .COMPARISON},
 	.LESS_EQUAL    = {nil, binary, .COMPARISON},
-	.IDENTIFIER    = {nil, nil, .NONE},
+	.IDENTIFIER    = {variable, nil, .NONE},
 	.STRING        = {string_proc, nil, .NONE},
 	.NUMBER        = {number, nil, .NONE},
 	.AND           = {nil, nil, .NONE},
@@ -90,8 +90,9 @@ compile :: proc(source: string, chunk: ^Chunk) -> bool {
 	compiling_chunk = chunk
 
 	advance()
-	expression()
-	consume(.EOF, "Expect end of expression.")
+	for !match(.EOF) {
+		declaration()
+	}
 	end_compiler()
 	return !parser.had_error
 }
@@ -117,6 +118,17 @@ consume :: proc(type: TokenType, msg: string) {
 	error_at_current(msg)
 }
 
+check :: proc(type: TokenType) -> bool {
+	return parser.current.type == type
+}
+
+@(private = "file")
+match :: proc(type: TokenType) -> bool {
+	if !check(type) do return false
+	advance()
+	return true
+}
+
 emit_byte :: proc(byt: u8) {
 	write_chunk(current_chunk(), byt, parser.previous.line)
 }
@@ -133,24 +145,51 @@ end_compiler :: proc() {
 	}
 }
 
-grouping :: proc() {
+grouping :: proc(can_assign: bool) {
 	expression()
 	consume(.RIGHT_PAREN, "Expect ')' after expression.")
 }
 
-number :: proc() {
+number :: proc(can_assign: bool) {
 	value, _ := strconv.parse_f64(token_text(parser.previous))
 	emit_constant(number_val(value))
 }
 
-string_proc :: proc() {
+string_proc :: proc(can_assign: bool) {
 	string_data := string(
 		mem.slice_ptr(mem.ptr_offset(parser.previous.start, 1), parser.previous.length - 2),
 	)
 	emit_constant(obj_val(copy_string(string_data)))
 }
 
-unary :: proc() {
+variable :: proc(can_assign: bool) {
+	named_variable(&parser.previous, can_assign)
+}
+
+
+named_variable :: proc(name: ^Token, can_assign: bool) {
+	arg := identifier_constant(name)
+
+	//TODO: set global long
+	if can_assign && match(.EQUAL) {
+		expression()
+		emit_bytes(u8(OpCode.SET_GLOBAL), u8(arg))
+	} else {
+		if arg <= 255 {
+			emit_bytes(u8(OpCode.GET_GLOBAL), u8(arg))
+		} else {
+			byte1 := u8((arg >> 16) & 0xFF)
+			byte2 := u8((arg >> 8) & 0xFF)
+			byte3 := u8(arg & 0xFF)
+			emit_byte(u8(OpCode.GET_GLOBAL_LONG))
+			emit_byte(byte1)
+			emit_byte(byte2)
+			emit_byte(byte3)
+		}
+	}
+}
+
+unary :: proc(can_assign: bool) {
 	operator_type := parser.previous.type
 
 	// compile the operand
@@ -167,7 +206,7 @@ unary :: proc() {
 	}
 }
 
-binary :: proc() {
+binary :: proc(can_assign: bool) {
 	operator_type := parser.previous.type
 	rule := get_rule(operator_type)
 	parse_precedence(Precedence(int(rule^.precedence) + 1))
@@ -199,7 +238,7 @@ binary :: proc() {
 	}
 }
 
-literal :: proc() {
+literal :: proc(can_assign: bool) {
 	#partial switch parser.previous.type {
 	case .FALSE:
 		emit_byte(u8(OpCode.FALSE))
@@ -218,12 +257,41 @@ parse_precedence :: proc(precedence: Precedence) {
 		error("Expect expression.")
 		return
 	}
-	prefix_rule()
+	can_assign := precedence <= Precedence.ASSIGNMENT
+	prefix_rule(can_assign)
 
 	for precedence <= get_rule(parser.current.type).precedence {
 		advance()
 		infix_rule := get_rule(parser.previous.type).infix
-		infix_rule()
+		infix_rule(can_assign)
+	}
+
+	if (can_assign && match(.EQUAL)) {
+		error("Invalid assignment target.")
+	}
+}
+
+identifier_constant :: proc(name: ^Token) -> int {
+	string_data := string(mem.slice_ptr(name.start, name.length))
+	return add_constant(current_chunk(), obj_val(copy_string(string_data)))
+}
+
+parse_variable :: proc(error_msg: string) -> int {
+	consume(.IDENTIFIER, error_msg)
+	return identifier_constant(&parser.previous)
+}
+
+define_variable :: proc(global: int) {
+	if global <= 255 {
+		emit_bytes(u8(OpCode.DEFINE_GLOBAL), u8(global))
+	} else {
+		byte1 := u8((global >> 16) & 0xFF)
+		byte2 := u8((global >> 8) & 0xFF)
+		byte3 := u8(global & 0xFF)
+		emit_byte(u8(OpCode.DEFINE_GLOBAL_LONG))
+		emit_byte(byte1)
+		emit_byte(byte2)
+		emit_byte(byte3)
 	}
 }
 
@@ -233,6 +301,58 @@ get_rule :: proc(type: TokenType) -> ^ParseRule {
 
 expression :: proc() {
 	parse_precedence(.ASSIGNMENT)
+}
+
+var_declaration :: proc() {
+	global := parse_variable("Expect variable name.")
+
+	if match(.EQUAL) {
+		expression()
+	} else {
+		emit_byte(u8(OpCode.NIL))
+	}
+	consume(.SEMICOLON, "Expect ';' after variable declaration.")
+	define_variable(global)
+}
+
+expression_statement :: proc() {
+	expression()
+	consume(.SEMICOLON, "Expect ';' after expression.")
+	emit_byte(u8(OpCode.POP))
+}
+
+print_statement :: proc() {
+	expression()
+	consume(.SEMICOLON, "Expect ';' after value.")
+	emit_byte(u8(OpCode.PRINT))
+}
+
+synchronize :: proc() {
+	parser.panic_mode = false
+
+	for parser.current.type != .EOF {
+		if parser.previous.type == .SEMICOLON do return
+		#partial switch parser.current.type {
+		case .CLASS, .FUN, .VAR, .FOR, .IF, .WHILE, .PRINT, .RETURN:
+			return
+		case:
+		}
+		advance()
+	}
+}
+
+declaration :: proc() {
+	if match(.VAR) {
+		var_declaration()
+	} else {
+		statement()
+	}
+
+	if parser.panic_mode do synchronize()
+}
+
+statement :: proc() {
+	if match(TokenType.PRINT) {print_statement()} else {expression_statement()}
 }
 
 emit_return :: proc() {

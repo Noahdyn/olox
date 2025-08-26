@@ -23,6 +23,8 @@ disassemble_instruction :: proc(chunk: ^Chunk, offset: int) -> int {
 	switch (instruction) {
 	case .RETURN:
 		return simple_instruction("OP_RETURN", offset)
+	case .PRINT:
+		return simple_instruction("OP_PRINT", offset)
 	case .NEGATE:
 		return simple_instruction("OP_NEGATE", offset)
 	case .ADD:
@@ -39,6 +41,8 @@ disassemble_instruction :: proc(chunk: ^Chunk, offset: int) -> int {
 		return long_constant_instruction("OP_CONSTANT_LONG", chunk, offset)
 	case .NIL:
 		return simple_instruction("OP_NIL", offset)
+	case .POP:
+		return simple_instruction("OP_POP", offset)
 	case .TRUE:
 		return simple_instruction("OP_TRUE", offset)
 	case .FALSE:
@@ -51,6 +55,16 @@ disassemble_instruction :: proc(chunk: ^Chunk, offset: int) -> int {
 		return simple_instruction("OP_EQUAL", offset)
 	case .LESS:
 		return simple_instruction("OP_EQUAL", offset)
+	case .DEFINE_GLOBAL:
+		return constant_instruction("OP_DEFINE_GLOBAL", chunk, offset)
+	case .DEFINE_GLOBAL_LONG:
+		return long_constant_instruction("OP_DEFINE_GLOBAL_LONG", chunk, offset)
+	case .GET_GLOBAL:
+		return constant_instruction("OP_GET_GLOBAL", chunk, offset)
+	case .GET_GLOBAL_LONG:
+		return long_constant_instruction("OP_GET_GLOBAL_LONG", chunk, offset)
+	case .SET_GLOBAL:
+		return constant_instruction("OP_SET_GLOBAL", chunk, offset)
 	case:
 		fmt.println("Unknown opcode ", instruction)
 		return offset + 1

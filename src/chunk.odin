@@ -10,6 +10,11 @@ OpCode :: enum u8 {
 	CONSTANT,
 	CONSTANT_LONG,
 	NEGATE,
+	DEFINE_GLOBAL,
+	DEFINE_GLOBAL_LONG,
+	GET_GLOBAL,
+	GET_GLOBAL_LONG,
+	SET_GLOBAL,
 	ADD,
 	SUBTRACT,
 	MULTIPLY,
@@ -21,6 +26,8 @@ OpCode :: enum u8 {
 	NIL,
 	TRUE,
 	FALSE,
+	PRINT,
+	POP,
 	RETURN,
 }
 
@@ -58,7 +65,7 @@ free_chunk :: proc(chunk: ^Chunk) {
 	delete(chunk.lines)
 }
 
-write_constant :: proc(chunk: ^Chunk, val: Value, line: int) {
+write_constant :: proc(chunk: ^Chunk, val: Value, line: int) -> int {
 	idx := add_constant(chunk, val)
 	if idx <= 255 {
 		write_chunk_opcode(chunk, OpCode.CONSTANT, line)
@@ -72,6 +79,7 @@ write_constant :: proc(chunk: ^Chunk, val: Value, line: int) {
 		write_chunk_byte(chunk, byte2, line)
 		write_chunk_byte(chunk, byte3, line)
 	}
+	return idx
 }
 
 add_constant :: proc(chunk: ^Chunk, val: Value) -> int {

@@ -79,6 +79,7 @@ advance_scanner :: proc() -> u8 {
 
 }
 
+@(private = "file")
 match :: proc(expected: u8) -> bool {
 	if is_at_end() do return false
 	if scanner.current^ != expected do return false
