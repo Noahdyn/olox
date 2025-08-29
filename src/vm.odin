@@ -237,7 +237,12 @@ run :: proc() -> InterpretResult {
 				runtime_error("Undefined variable '%s'.", (cast(^ObjString)as_obj(key)).str)
 				return .RUNTIME_ERROR
 			}
-
+		case u8(OpCode.GET_LOCAL):
+			slot := read_byte()
+			push_stack(vm.stack[slot])
+		case u8(OpCode.SET_LOCAL):
+			slot := read_byte()
+			vm.stack[slot] = peek_vm(0)
 		}
 	}
 }

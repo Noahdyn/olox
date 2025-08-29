@@ -3,8 +3,11 @@ package olox
 import "core:fmt"
 import "core:mem"
 import "core:strconv"
+import "core:strings"
 
 DEBUG_PRINT_CODE :: false
+
+U8_COUNT_MAX :: max(u8)
 
 ParseFn :: proc(can_assign: bool)
 
@@ -32,6 +35,17 @@ ParseRule :: struct {
 	prefix:     ParseFn,
 	infix:      ParseFn,
 	precedence: Precedence,
+}
+
+Compiler :: struct {
+	locals:      [U8_COUNT_MAX]Local,
+	local_count: int,
+	scope_depth: int,
+}
+
+Local :: struct {
+	name:  Token,
+	depth: int,
 }
 
 rules: [TokenType]ParseRule = {
@@ -79,6 +93,7 @@ rules: [TokenType]ParseRule = {
 
 
 parser: Parser
+current: ^Compiler
 compiling_chunk: ^Chunk
 
 current_chunk :: proc() -> ^Chunk {
@@ -87,6 +102,8 @@ current_chunk :: proc() -> ^Chunk {
 
 compile :: proc(source: string, chunk: ^Chunk) -> bool {
 	init_scanner(source)
+	compiler: Compiler
+	init_compiler(&compiler)
 	compiling_chunk = chunk
 
 	advance()
@@ -145,6 +162,20 @@ end_compiler :: proc() {
 	}
 }
 
+begin_scope :: proc() {
+	current.scope_depth += 1
+}
+
+end_scope :: proc() {
+	current.scope_depth -= 1
+
+	for current.local_count > 0 &&
+	    current.locals[current.local_count - 1].depth > current.scope_depth {
+		emit_byte(u8(OpCode.POP))
+		current.local_count -= 1
+	}
+}
+
 grouping :: proc(can_assign: bool) {
 	expression()
 	consume(.RIGHT_PAREN, "Expect ')' after expression.")
@@ -168,20 +199,31 @@ variable :: proc(can_assign: bool) {
 
 
 named_variable :: proc(name: ^Token, can_assign: bool) {
-	arg := identifier_constant(name)
 
+	get_op, get_op_long, set_op: u8
+	arg := resolve_local(current, name)
+	if arg != -1 {
+		get_op = u8(OpCode.GET_LOCAL)
+		set_op = u8(OpCode.SET_LOCAL)
+		get_op_long = get_op
+	} else {
+		arg = identifier_constant(name)
+		get_op = u8(OpCode.GET_GLOBAL)
+		set_op = u8(OpCode.SET_GLOBAL)
+		get_op_long = u8(OpCode.GET_GLOBAL_LONG)
+	}
 	//TODO: set global long
 	if can_assign && match(.EQUAL) {
 		expression()
-		emit_bytes(u8(OpCode.SET_GLOBAL), u8(arg))
+		emit_bytes(set_op, u8(arg))
 	} else {
 		if arg <= 255 {
-			emit_bytes(u8(OpCode.GET_GLOBAL), u8(arg))
+			emit_bytes(get_op, u8(arg))
 		} else {
 			byte1 := u8((arg >> 16) & 0xFF)
 			byte2 := u8((arg >> 8) & 0xFF)
 			byte3 := u8(arg & 0xFF)
-			emit_byte(u8(OpCode.GET_GLOBAL_LONG))
+			emit_byte(get_op_long)
 			emit_byte(byte1)
 			emit_byte(byte2)
 			emit_byte(byte3)
@@ -276,12 +318,72 @@ identifier_constant :: proc(name: ^Token) -> int {
 	return add_constant(current_chunk(), obj_val(copy_string(string_data)))
 }
 
+identifiers_equal :: proc(a, b: ^Token) -> bool {
+	if a.length != b.length do return false
+	a_str_data := string(mem.slice_ptr(a.start, a.length))
+	b_str_data := string(mem.slice_ptr(b.start, b.length))
+
+	return strings.compare(a_str_data, b_str_data) == 0
+}
+
+resolve_local :: proc(compiler: ^Compiler, name: ^Token) -> int {
+	for i := compiler.local_count - 1; i >= 0; i -= 1 {
+		local := compiler.locals[i]
+		if identifiers_equal(name, &local.name) {
+			if local.depth == -1 {
+				error("Can't read local variable in its own initializer,")
+			}
+			return i
+		}
+	}
+	return -1
+}
+
+add_local :: proc(name: Token) {
+	if current.local_count == int(U8_COUNT_MAX) {
+		error("Too many local variables in function")
+		return
+	}
+	local := current.locals[current.local_count]
+	current.local_count += 1
+	local.name = name
+	local.depth = -1
+}
+
+declare_variable :: proc() {
+	if current.scope_depth == 0 do return
+
+	name := parser.previous
+	for i := current.local_count - 1; i >= 0; i -= 1 {
+		local := current.locals[i]
+		if local.depth != -1 && local.depth < current.scope_depth do break
+
+		if identifiers_equal(&name, &local.name) {
+			error("Already a variable with this name in this scope.")
+		}
+	}
+	add_local(name)
+}
+
 parse_variable :: proc(error_msg: string) -> int {
 	consume(.IDENTIFIER, error_msg)
+
+	declare_variable()
+	if current.scope_depth > 0 do return 0
+
 	return identifier_constant(&parser.previous)
 }
 
+mark_initialized :: proc() {
+	current.locals[current.local_count - 1].depth = current.scope_depth
+}
+
 define_variable :: proc(global: int) {
+	if current.scope_depth > 0 {
+		mark_initialized()
+		return
+	}
+
 	if global <= 255 {
 		emit_bytes(u8(OpCode.DEFINE_GLOBAL), u8(global))
 	} else {
@@ -301,6 +403,14 @@ get_rule :: proc(type: TokenType) -> ^ParseRule {
 
 expression :: proc() {
 	parse_precedence(.ASSIGNMENT)
+}
+
+block :: proc() {
+	for !check(.RIGHT_BRACE) && !check(.EOF) {
+		declaration()
+	}
+	consume(.RIGHT_BRACE, "Expect '}' after block.")
+
 }
 
 var_declaration :: proc() {
@@ -347,12 +457,19 @@ declaration :: proc() {
 	} else {
 		statement()
 	}
-
 	if parser.panic_mode do synchronize()
 }
 
 statement :: proc() {
-	if match(TokenType.PRINT) {print_statement()} else {expression_statement()}
+	if match(.PRINT) {
+		print_statement()
+	} else if match(.LEFT_BRACE) {
+		begin_scope()
+		block()
+		end_scope()
+	} else {
+		expression_statement()
+	}
 }
 
 emit_return :: proc() {
@@ -363,6 +480,9 @@ emit_constant :: proc(value: Value) {
 	write_constant(current_chunk(), value, parser.previous.line)
 }
 
+init_compiler :: proc(compiler: ^Compiler) {
+	current = compiler
+}
 
 error_at_current :: proc(msg: string) {
 	error_at(&parser.current, msg)

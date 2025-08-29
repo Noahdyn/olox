@@ -1,0 +1,11 @@
+*
+
+!benchmark/
+!benchmark/**
+!src/
+!src/**
+
+!.gitignore
+
+!README.md
+

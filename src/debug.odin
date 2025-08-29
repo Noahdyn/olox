@@ -65,6 +65,10 @@ disassemble_instruction :: proc(chunk: ^Chunk, offset: int) -> int {
 		return long_constant_instruction("OP_GET_GLOBAL_LONG", chunk, offset)
 	case .SET_GLOBAL:
 		return constant_instruction("OP_SET_GLOBAL", chunk, offset)
+	case .SET_LOCAL:
+		return byte_instruction("OP_SET_LOCAL", chunk, offset)
+	case .GET_LOCAL:
+		return byte_instruction("OP_GET_LOCAL", chunk, offset)
 	case:
 		fmt.println("Unknown opcode ", instruction)
 		return offset + 1
@@ -74,6 +78,12 @@ disassemble_instruction :: proc(chunk: ^Chunk, offset: int) -> int {
 simple_instruction :: proc(name: string, offset: int) -> int {
 	fmt.println(name)
 	return offset + 1
+}
+
+byte_instruction :: proc(name: string, chunk: ^Chunk, offset: int) -> int {
+	slot := chunk.code[offset + 1]
+	fmt.printf("%-16s %4d\n", name, slot)
+	return offset + 2
 }
 
 constant_instruction :: proc(name: string, chunk: ^Chunk, offset: int) -> int {
