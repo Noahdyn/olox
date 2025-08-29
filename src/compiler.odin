@@ -526,7 +526,8 @@ error_at :: proc(token: ^Token, msg: string) {
 	} else if token.type == .ERROR {
 		//nothing
 	} else {
-		fmt.eprintf(" at '%.*s'", token.length, token.start)
+		token_str := string(mem.slice_ptr(token.start, token.length))
+		fmt.eprintf(" at '%s'", token_str)
 	}
 	fmt.eprintf(": %s\n", msg)
 	parser.had_error = true
