@@ -59,6 +59,7 @@ TokenType :: enum {
 	TRUE,
 	VAR,
 	WHILE,
+	FINAL,
 	ERROR,
 	EOF,
 }
@@ -238,13 +239,15 @@ identifier_type :: proc() -> TokenType {
 		return check_keyword(1, 3, "lse", .ELSE)
 	case 'f':
 		if uintptr(scanner.current) - uintptr(scanner.start) > 1 {
-			switch scanner.start^ {
+			switch mem.ptr_offset(scanner.start, 1)^ {
 			case 'a':
 				return check_keyword(2, 3, "lse", .FALSE)
 			case 'o':
 				return check_keyword(2, 1, "r", .FOR)
 			case 'u':
 				return check_keyword(2, 1, "n", .FUN)
+			case 'i':
+				return check_keyword(2, 3, "nal", .FINAL)
 			}
 		}
 	case 'i':
@@ -261,7 +264,7 @@ identifier_type :: proc() -> TokenType {
 		return check_keyword(1, 4, "uper", .SUPER)
 	case 't':
 		if int(uintptr(scanner.current) - uintptr(scanner.start)) > 1 {
-			switch scanner.start^ {
+			switch mem.ptr_offset(scanner.start, 1)^ {
 			case 'h':
 				return check_keyword(2, 2, "is", .THIS)
 			case 'r':

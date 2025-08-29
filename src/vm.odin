@@ -202,6 +202,12 @@ run :: proc() -> InterpretResult {
 			name := read_constant()
 			table_set(&vm.globals, name, peek_vm(0))
 			pop_stack()
+		case u8(OpCode.DEFINE_GLOBAL_FINAL):
+			name := read_constant()
+			val := peek_vm(0)
+			val.final = true
+			table_set(&vm.globals, name, val)
+			pop_stack()
 		case u8(OpCode.DEFINE_GLOBAL_LONG):
 			byte1 := read_byte()
 			byte2 := read_byte()
@@ -209,6 +215,16 @@ run :: proc() -> InterpretResult {
 			name_index := int(byte1) << 16 | int(byte2) << 8 | int(byte3)
 			name := vm.chunk.constants[name_index]
 			table_set(&vm.globals, name, peek_vm(0))
+			pop_stack()
+		case u8(OpCode.DEFINE_GLOBAL_FINAL_LONG):
+			byte1 := read_byte()
+			byte2 := read_byte()
+			byte3 := read_byte()
+			name_index := int(byte1) << 16 | int(byte2) << 8 | int(byte3)
+			name := vm.chunk.constants[name_index]
+			val := peek_vm(0)
+			val.final = true
+			table_set(&vm.globals, name, val)
 			pop_stack()
 		case u8(OpCode.GET_GLOBAL):
 			key := read_constant()
@@ -232,11 +248,19 @@ run :: proc() -> InterpretResult {
 			push_stack(value)
 		case u8(OpCode.SET_GLOBAL):
 			key := read_constant()
-			if table_set(&vm.globals, key, peek_vm(0)) {
-				table_delete(&vm.globals, key)
+			val, found := table_get(&vm.globals, key)
+			if !found {
 				runtime_error("Undefined variable '%s'.", (cast(^ObjString)as_obj(key)).str)
 				return .RUNTIME_ERROR
 			}
+			if val.final {
+				runtime_error(
+					"Cannot assign to final variable '%s'.",
+					(cast(^ObjString)as_obj(key)).str,
+				)
+				return .RUNTIME_ERROR
+			}
+			table_set(&vm.globals, key, peek_vm(0))
 		case u8(OpCode.GET_LOCAL):
 			slot := read_byte()
 			push_stack(vm.stack[slot])

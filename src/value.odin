@@ -11,6 +11,7 @@ ValueType :: enum {
 
 Value :: struct {
 	type:    ValueType,
+	final:   bool,
 	variant: union {
 		bool,
 		f64,
@@ -31,21 +32,21 @@ print_value :: proc(value: Value) {
 	}
 }
 
-bool_val :: #force_inline proc(val: bool) -> Value {
-	return Value{.BOOL, val}
+bool_val :: #force_inline proc(val: bool, final: bool = false) -> Value {
+	return Value{.BOOL, final, val}
 }
 
-number_val :: #force_inline proc(val: f64) -> Value {
-	return Value{.NUMBER, val}
+number_val :: #force_inline proc(val: f64, final: bool = false) -> Value {
+	return Value{.NUMBER, final, val}
 }
 
-nil_val :: #force_inline proc() -> Value {
-	return Value{.NIL, 0}
+nil_val :: #force_inline proc(final: bool = false) -> Value {
+	return Value{.NIL, final, 0}
 }
 
 
-obj_val :: #force_inline proc(object: ^Obj) -> Value {
-	return Value{.OBJ, object}
+obj_val :: #force_inline proc(object: ^Obj, final: bool = false) -> Value {
+	return Value{.OBJ, final, object}
 }
 
 as_bool :: #force_inline proc(val: Value) -> bool {

@@ -69,6 +69,10 @@ disassemble_instruction :: proc(chunk: ^Chunk, offset: int) -> int {
 		return byte_instruction("OP_SET_LOCAL", chunk, offset)
 	case .GET_LOCAL:
 		return byte_instruction("OP_GET_LOCAL", chunk, offset)
+	case .DEFINE_GLOBAL_FINAL:
+		return constant_instruction("OP_DEFINE_GLOBAL_FINAL", chunk, offset)
+	case .DEFINE_GLOBAL_FINAL_LONG:
+		return long_constant_instruction("OP_DEFINE_GLOBAL_FINAL_LONG", chunk, offset)
 	case:
 		fmt.println("Unknown opcode ", instruction)
 		return offset + 1

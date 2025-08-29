@@ -46,6 +46,7 @@ Compiler :: struct {
 Local :: struct {
 	name:  Token,
 	depth: int,
+	final: bool,
 }
 
 rules: [TokenType]ParseRule = {
@@ -87,6 +88,7 @@ rules: [TokenType]ParseRule = {
 	.TRUE          = {literal, nil, .NONE},
 	.VAR           = {nil, nil, .NONE},
 	.WHILE         = {nil, nil, .NONE},
+	.FINAL         = {nil, nil, .NONE},
 	.ERROR         = {nil, nil, .NONE},
 	.EOF           = {nil, nil, .NONE},
 }
@@ -197,36 +199,46 @@ variable :: proc(can_assign: bool) {
 	named_variable(&parser.previous, can_assign)
 }
 
-
 named_variable :: proc(name: ^Token, can_assign: bool) {
-
+	//TODO: set global long
 	get_op, get_op_long, set_op: u8
 	arg := resolve_local(current, name)
 	if arg != -1 {
 		get_op = u8(OpCode.GET_LOCAL)
 		set_op = u8(OpCode.SET_LOCAL)
 		get_op_long = get_op
+
+		if can_assign && match(.EQUAL) {
+			if current.locals[arg].final {
+				error("Cannot assign to final variable.")
+				return
+			}
+			expression()
+			emit_bytes(set_op, u8(arg))
+		} else {
+			emit_bytes(get_op, u8(arg))
+		}
 	} else {
 		arg = identifier_constant(name)
 		get_op = u8(OpCode.GET_GLOBAL)
 		set_op = u8(OpCode.SET_GLOBAL)
 		get_op_long = u8(OpCode.GET_GLOBAL_LONG)
-	}
-	//TODO: set global long
-	if can_assign && match(.EQUAL) {
-		expression()
-		emit_bytes(set_op, u8(arg))
-	} else {
-		if arg <= 255 {
-			emit_bytes(get_op, u8(arg))
+
+		if can_assign && match(.EQUAL) {
+			expression()
+			emit_bytes(set_op, u8(arg))
 		} else {
-			byte1 := u8((arg >> 16) & 0xFF)
-			byte2 := u8((arg >> 8) & 0xFF)
-			byte3 := u8(arg & 0xFF)
-			emit_byte(get_op_long)
-			emit_byte(byte1)
-			emit_byte(byte2)
-			emit_byte(byte3)
+			if arg <= 255 {
+				emit_bytes(get_op, u8(arg))
+			} else {
+				byte1 := u8((arg >> 16) & 0xFF)
+				byte2 := u8((arg >> 8) & 0xFF)
+				byte3 := u8(arg & 0xFF)
+				emit_byte(get_op_long)
+				emit_byte(byte1)
+				emit_byte(byte2)
+				emit_byte(byte3)
+			}
 		}
 	}
 }
@@ -339,18 +351,19 @@ resolve_local :: proc(compiler: ^Compiler, name: ^Token) -> int {
 	return -1
 }
 
-add_local :: proc(name: Token) {
+add_local :: proc(name: Token, final: bool = false) {
 	if current.local_count == int(U8_COUNT_MAX) {
 		error("Too many local variables in function")
 		return
 	}
-	local := current.locals[current.local_count]
+	local := &current.locals[current.local_count]
 	current.local_count += 1
 	local.name = name
 	local.depth = -1
+	local.final = final
 }
 
-declare_variable :: proc() {
+declare_variable :: proc(final: bool = false) {
 	if current.scope_depth == 0 do return
 
 	name := parser.previous
@@ -362,13 +375,13 @@ declare_variable :: proc() {
 			error("Already a variable with this name in this scope.")
 		}
 	}
-	add_local(name)
+	add_local(name, final)
 }
 
-parse_variable :: proc(error_msg: string) -> int {
+parse_variable :: proc(error_msg: string, final: bool = false) -> int {
 	consume(.IDENTIFIER, error_msg)
 
-	declare_variable()
+	declare_variable(final)
 	if current.scope_depth > 0 do return 0
 
 	return identifier_constant(&parser.previous)
@@ -378,19 +391,28 @@ mark_initialized :: proc() {
 	current.locals[current.local_count - 1].depth = current.scope_depth
 }
 
-define_variable :: proc(global: int) {
+define_variable :: proc(global: int, final: bool) {
 	if current.scope_depth > 0 {
 		mark_initialized()
 		return
 	}
 
+	define_op, define_op_long: u8
+	if final {
+		define_op = u8(OpCode.DEFINE_GLOBAL_FINAL)
+		define_op_long = u8(OpCode.DEFINE_GLOBAL_FINAL_LONG)
+	} else {
+		define_op = u8(OpCode.DEFINE_GLOBAL)
+		define_op_long = u8(OpCode.DEFINE_GLOBAL_LONG)
+	}
+
 	if global <= 255 {
-		emit_bytes(u8(OpCode.DEFINE_GLOBAL), u8(global))
+		emit_bytes(define_op, u8(global))
 	} else {
 		byte1 := u8((global >> 16) & 0xFF)
 		byte2 := u8((global >> 8) & 0xFF)
 		byte3 := u8(global & 0xFF)
-		emit_byte(u8(OpCode.DEFINE_GLOBAL_LONG))
+		emit_byte(define_op_long)
 		emit_byte(byte1)
 		emit_byte(byte2)
 		emit_byte(byte3)
@@ -413,8 +435,8 @@ block :: proc() {
 
 }
 
-var_declaration :: proc() {
-	global := parse_variable("Expect variable name.")
+var_declaration :: proc(final: bool = false) {
+	global := parse_variable("Expect variable name.", final)
 
 	if match(.EQUAL) {
 		expression()
@@ -422,7 +444,7 @@ var_declaration :: proc() {
 		emit_byte(u8(OpCode.NIL))
 	}
 	consume(.SEMICOLON, "Expect ';' after variable declaration.")
-	define_variable(global)
+	define_variable(global, final = final)
 }
 
 expression_statement :: proc() {
@@ -454,6 +476,8 @@ synchronize :: proc() {
 declaration :: proc() {
 	if match(.VAR) {
 		var_declaration()
+	} else if match(.FINAL) {
+		var_declaration(final = true)
 	} else {
 		statement()
 	}
