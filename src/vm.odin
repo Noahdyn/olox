@@ -62,6 +62,7 @@ free_object :: proc(object: ^Obj) {
 	switch object.type {
 	case .String:
 		o := cast(^ObjString)object
+		delete(o.str)
 		free(o)
 	}
 }
@@ -261,6 +262,26 @@ run :: proc() -> InterpretResult {
 				return .RUNTIME_ERROR
 			}
 			table_set(&vm.globals, key, peek_vm(0))
+		case u8(OpCode.SET_GLOBAL_LONG):
+			byte1 := read_byte()
+			byte2 := read_byte()
+			byte3 := read_byte()
+			key_index := int(byte1) << 16 | int(byte2) << 8 | int(byte3)
+			key := vm.chunk.constants[key_index]
+			val, found := table_get(&vm.globals, key)
+			if !found {
+				runtime_error("Undefined variable '%s'.", (cast(^ObjString)as_obj(key)).str)
+				return .RUNTIME_ERROR
+			}
+			if val.final {
+				runtime_error(
+					"Cannot assign to final variable '%s'.",
+					(cast(^ObjString)as_obj(key)).str,
+				)
+				return .RUNTIME_ERROR
+			}
+			table_set(&vm.globals, key, peek_vm(0))
+
 		case u8(OpCode.GET_LOCAL):
 			slot := read_byte()
 			push_stack(vm.stack[slot])

@@ -30,7 +30,9 @@ copy_string :: proc(str: string) -> ^ObjString {
 	s := strings.clone(str)
 	hash := hash_string(s)
 	interned := table_find_string(&vm.strings, s, hash)
-	if interned != nil do return interned
+	if interned != nil {
+		return interned
+	}
 	return allocate_string(s, hash)
 }
 

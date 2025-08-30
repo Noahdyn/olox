@@ -7,8 +7,6 @@ import "core:strings"
 
 DEBUG_PRINT_CODE :: false
 
-U8_COUNT_MAX :: max(u8)
-
 ParseFn :: proc(can_assign: bool)
 
 Parser :: struct {
@@ -38,8 +36,7 @@ ParseRule :: struct {
 }
 
 Compiler :: struct {
-	locals:      [U8_COUNT_MAX]Local,
-	local_count: int,
+	locals:      [dynamic]Local,
 	scope_depth: int,
 }
 
@@ -106,6 +103,7 @@ compile :: proc(source: string, chunk: ^Chunk) -> bool {
 	init_scanner(source)
 	compiler: Compiler
 	init_compiler(&compiler)
+	defer free_compiler(&compiler)
 	compiling_chunk = chunk
 
 	advance()
@@ -171,10 +169,10 @@ begin_scope :: proc() {
 end_scope :: proc() {
 	current.scope_depth -= 1
 
-	for current.local_count > 0 &&
-	    current.locals[current.local_count - 1].depth > current.scope_depth {
+	for len(&current.locals) > 0 &&
+	    current.locals[len(&current.locals) - 1].depth > current.scope_depth {
 		emit_byte(u8(OpCode.POP))
-		current.local_count -= 1
+		pop(&current.locals)
 	}
 }
 
@@ -200,13 +198,15 @@ variable :: proc(can_assign: bool) {
 }
 
 named_variable :: proc(name: ^Token, can_assign: bool) {
-	//TODO: set global long
-	get_op, get_op_long, set_op: u8
+	get_op, get_op_long, set_op, set_op_long: u8
 	arg := resolve_local(current, name)
+
 	if arg != -1 {
+		// Local variable
 		get_op = u8(OpCode.GET_LOCAL)
 		set_op = u8(OpCode.SET_LOCAL)
-		get_op_long = get_op
+		set_op_long = u8(OpCode.SET_LOCAL_LONG)
+		get_op_long = u8(OpCode.GET_LOCAL_LONG)
 
 		if can_assign && match(.EQUAL) {
 			if current.locals[arg].final {
@@ -214,20 +214,56 @@ named_variable :: proc(name: ^Token, can_assign: bool) {
 				return
 			}
 			expression()
-			emit_bytes(set_op, u8(arg))
+			// Emit SET instruction
+			if arg <= 255 {
+				emit_bytes(set_op, u8(arg))
+			} else {
+				byte1 := u8((arg >> 16) & 0xFF)
+				byte2 := u8((arg >> 8) & 0xFF)
+				byte3 := u8(arg & 0xFF)
+				emit_byte(set_op_long)
+				emit_byte(byte1)
+				emit_byte(byte2)
+				emit_byte(byte3)
+			}
 		} else {
-			emit_bytes(get_op, u8(arg))
+			// Emit GET instruction
+			if arg <= 255 {
+				emit_bytes(get_op, u8(arg))
+			} else {
+				byte1 := u8((arg >> 16) & 0xFF)
+				byte2 := u8((arg >> 8) & 0xFF)
+				byte3 := u8(arg & 0xFF)
+				emit_byte(get_op_long)
+				emit_byte(byte1)
+				emit_byte(byte2)
+				emit_byte(byte3)
+			}
 		}
 	} else {
+		// Global variable
 		arg = identifier_constant(name)
 		get_op = u8(OpCode.GET_GLOBAL)
 		set_op = u8(OpCode.SET_GLOBAL)
+		set_op_long = u8(OpCode.SET_GLOBAL_LONG)
 		get_op_long = u8(OpCode.GET_GLOBAL_LONG)
 
 		if can_assign && match(.EQUAL) {
 			expression()
-			emit_bytes(set_op, u8(arg))
+			// Emit SET instruction
+			if arg <= 255 {
+				emit_bytes(set_op, u8(arg))
+			} else {
+				byte1 := u8((arg >> 16) & 0xFF)
+				byte2 := u8((arg >> 8) & 0xFF)
+				byte3 := u8(arg & 0xFF)
+				emit_byte(set_op_long)
+				emit_byte(byte1)
+				emit_byte(byte2)
+				emit_byte(byte3)
+			}
 		} else {
+			// Emit GET instruction
 			if arg <= 255 {
 				emit_bytes(get_op, u8(arg))
 			} else {
@@ -339,7 +375,7 @@ identifiers_equal :: proc(a, b: ^Token) -> bool {
 }
 
 resolve_local :: proc(compiler: ^Compiler, name: ^Token) -> int {
-	for i := compiler.local_count - 1; i >= 0; i -= 1 {
+	for i := len(&compiler.locals) - 1; i >= 0; i -= 1 {
 		local := compiler.locals[i]
 		if identifiers_equal(name, &local.name) {
 			if local.depth == -1 {
@@ -352,22 +388,18 @@ resolve_local :: proc(compiler: ^Compiler, name: ^Token) -> int {
 }
 
 add_local :: proc(name: Token, final: bool = false) {
-	if current.local_count == int(U8_COUNT_MAX) {
-		error("Too many local variables in function")
-		return
-	}
-	local := &current.locals[current.local_count]
-	current.local_count += 1
+	local: Local
 	local.name = name
 	local.depth = -1
 	local.final = final
+	append(&current.locals, local)
 }
 
 declare_variable :: proc(final: bool = false) {
 	if current.scope_depth == 0 do return
 
 	name := parser.previous
-	for i := current.local_count - 1; i >= 0; i -= 1 {
+	for i := len(&current.locals) - 1; i >= 0; i -= 1 {
 		local := current.locals[i]
 		if local.depth != -1 && local.depth < current.scope_depth do break
 
@@ -388,7 +420,7 @@ parse_variable :: proc(error_msg: string, final: bool = false) -> int {
 }
 
 mark_initialized :: proc() {
-	current.locals[current.local_count - 1].depth = current.scope_depth
+	current.locals[len(&current.locals) - 1].depth = current.scope_depth
 }
 
 define_variable :: proc(global: int, final: bool) {
@@ -506,6 +538,10 @@ emit_constant :: proc(value: Value) {
 
 init_compiler :: proc(compiler: ^Compiler) {
 	current = compiler
+}
+
+free_compiler :: proc(compiler: ^Compiler) {
+	delete(compiler.locals)
 }
 
 error_at_current :: proc(msg: string) {
