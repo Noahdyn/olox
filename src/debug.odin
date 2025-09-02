@@ -79,6 +79,12 @@ disassemble_instruction :: proc(chunk: ^Chunk, offset: int) -> int {
 		return constant_instruction("OP_DEFINE_GLOBAL_FINAL", chunk, offset)
 	case .DEFINE_GLOBAL_FINAL_LONG:
 		return long_constant_instruction("OP_DEFINE_GLOBAL_FINAL_LONG", chunk, offset)
+	case .JUMP:
+		return jump_instruction("OP_JUMP", 1, chunk, offset)
+	case .JUMP_IF_FALSE:
+		return jump_instruction("OP_JUMP_IF_FALSE", 1, chunk, offset)
+	case .LOOP:
+		return jump_instruction("OP_LOOP", -1, chunk, offset)
 	case:
 		fmt.println("Unknown opcode ", instruction)
 		return offset + 1
@@ -88,6 +94,13 @@ disassemble_instruction :: proc(chunk: ^Chunk, offset: int) -> int {
 simple_instruction :: proc(name: string, offset: int) -> int {
 	fmt.println(name)
 	return offset + 1
+}
+
+jump_instruction :: proc(name: string, sign: int, chunk: ^Chunk, offset: int) -> int {
+	jump := u16(chunk.code[offset + 1] << 8)
+	jump |= u16(chunk.code[offset + 2])
+	fmt.printf("%-16s %4d -> %d\n", name, offset, offset + 3 + sign * int(jump))
+	return offset + 3
 }
 
 long_byte_instruction :: proc(name: string, chunk: ^Chunk, offset: int) -> int {

@@ -69,7 +69,7 @@ rules: [TokenType]ParseRule = {
 	.IDENTIFIER    = {variable, nil, .NONE},
 	.STRING        = {string_proc, nil, .NONE},
 	.NUMBER        = {number, nil, .NONE},
-	.AND           = {nil, nil, .NONE},
+	.AND           = {nil, and_proc, .AND},
 	.CLASS         = {nil, nil, .NONE},
 	.ELSE          = {nil, nil, .NONE},
 	.FALSE         = {literal, nil, .NONE},
@@ -77,7 +77,7 @@ rules: [TokenType]ParseRule = {
 	.FUN           = {nil, nil, .NONE},
 	.IF            = {nil, nil, .NONE},
 	.NIL           = {literal, nil, .NONE},
-	.OR            = {nil, nil, .NONE},
+	.OR            = {nil, or, .OR},
 	.PRINT         = {nil, nil, .NONE},
 	.RETURN        = {nil, nil, .NONE},
 	.SUPER         = {nil, nil, .NONE},
@@ -155,6 +155,23 @@ emit_bytes :: proc(byte1, byte2: u8) {
 	emit_byte(byte2)
 }
 
+emit_loop :: proc(loop_start: int) {
+	emit_byte(u8(OpCode.LOOP))
+
+	offset := len(current_chunk().code) - loop_start + 2
+	if offset > int(max(u16)) do error("Loop body too large.")
+
+	emit_byte(u8((offset >> 8) & 0xff))
+	emit_byte(u8(offset & 0xff))
+}
+
+emit_jump :: proc(instruction: u8) -> int {
+	emit_byte(instruction)
+	emit_byte(0xff)
+	emit_byte(0xff)
+	return len((current_chunk().code)) - 2
+}
+
 end_compiler :: proc() {
 	emit_return()
 	if DEBUG_PRINT_CODE && !parser.had_error {
@@ -184,6 +201,17 @@ grouping :: proc(can_assign: bool) {
 number :: proc(can_assign: bool) {
 	value, _ := strconv.parse_f64(token_text(parser.previous))
 	emit_constant(number_val(value))
+}
+
+or :: proc(can_assign: bool) {
+	else_jump := emit_jump(u8(OpCode.JUMP_IF_FALSE))
+	end_jump := emit_jump(u8(OpCode.JUMP))
+
+	patch_jump(else_jump)
+	emit_byte(u8(OpCode.POP))
+
+	parse_precedence(.OR)
+	patch_jump(end_jump)
 }
 
 string_proc :: proc(can_assign: bool) {
@@ -451,6 +479,13 @@ define_variable :: proc(global: int, final: bool) {
 	}
 }
 
+and_proc :: proc(can_assign: bool) {
+	end_jump := emit_jump(u8(OpCode.JUMP_IF_FALSE))
+	emit_byte(u8(OpCode.POP))
+	parse_precedence(.AND)
+	patch_jump(end_jump)
+}
+
 get_rule :: proc(type: TokenType) -> ^ParseRule {
 	return &rules[type]
 }
@@ -485,10 +520,85 @@ expression_statement :: proc() {
 	emit_byte(u8(OpCode.POP))
 }
 
+for_statement :: proc() {
+	begin_scope()
+	consume(.LEFT_PAREN, "Expect '(' after 'for'.")
+
+	if match(.SEMICOLON) {
+		//no initializer
+	} else if match(.VAR) {
+		var_declaration()
+	} else {
+		expression_statement()
+	}
+
+	loop_start := len(current_chunk().code)
+
+	exit_jump := -1
+	if !match(.SEMICOLON) {
+		expression()
+		consume(.SEMICOLON, "Expect ';' after loop condition.")
+		exit_jump := emit_jump(u8(OpCode.JUMP_IF_FALSE))
+		emit_byte(u8(OpCode.POP))
+	}
+
+	if !match(.RIGHT_PAREN) {
+		body_jump := emit_jump(u8(OpCode.JUMP))
+		increment_start := len(current_chunk().code)
+		expression()
+		emit_byte(u8(OpCode.POP))
+		consume(.RIGHT_PAREN, "Expect ')' after for clauses.")
+
+		emit_loop(loop_start)
+		loop_start = increment_start
+		patch_jump(body_jump)
+	}
+
+	statement()
+	emit_loop(loop_start)
+
+	if exit_jump != -1 {
+		patch_jump(exit_jump)
+		emit_byte(u8(OpCode.POP))
+	}
+	end_scope()
+
+}
+
+if_statement :: proc() {
+	expression()
+	consume(.RIGHT_PAREN, "Expect ')' after condition.")
+	then_jump := emit_jump(u8(OpCode.JUMP_IF_FALSE))
+	statement()
+
+	else_jump := emit_jump(u8(OpCode.JUMP))
+
+	patch_jump(then_jump)
+
+	if match(.ELSE) do statement()
+	patch_jump(else_jump)
+}
+
 print_statement :: proc() {
 	expression()
 	consume(.SEMICOLON, "Expect ';' after value.")
 	emit_byte(u8(OpCode.PRINT))
+}
+
+while_statement :: proc() {
+	loop_start := len(current_chunk().code)
+	consume(.LEFT_PAREN, "Expect '(' after 'while'.")
+	expression()
+	consume(.RIGHT_PAREN, "Expect ')' after condition.")
+
+	exit_jump := emit_jump(u8(OpCode.JUMP_IF_FALSE))
+	emit_byte(u8(OpCode.POP))
+	statement()
+	emit_loop(loop_start)
+
+	patch_jump(exit_jump)
+	emit_byte(u8(OpCode.POP))
+
 }
 
 synchronize :: proc() {
@@ -519,6 +629,12 @@ declaration :: proc() {
 statement :: proc() {
 	if match(.PRINT) {
 		print_statement()
+	} else if match(.FOR) {
+		for_statement()
+	} else if match(.IF) {
+		if_statement()
+	} else if match(.WHILE) {
+		while_statement()
 	} else if match(.LEFT_BRACE) {
 		begin_scope()
 		block()
@@ -534,6 +650,17 @@ emit_return :: proc() {
 
 emit_constant :: proc(value: Value) {
 	write_constant(current_chunk(), value, parser.previous.line)
+}
+
+patch_jump :: proc(offset: int) {
+	jump := len(current_chunk().code) - offset - 2
+
+	if jump > int(max(u16)) {
+		error("Too much code to jump over.")
+	}
+
+	current_chunk().code[offset] = u8(jump >> 8)
+	current_chunk().code[offset + 1] = u8(jump & 0xff)
 }
 
 init_compiler :: proc(compiler: ^Compiler) {

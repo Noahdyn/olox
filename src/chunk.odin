@@ -34,6 +34,9 @@ OpCode :: enum u8 {
 	TRUE,
 	FALSE,
 	PRINT,
+	JUMP_IF_FALSE,
+	JUMP,
+	LOOP,
 	POP,
 	RETURN,
 }

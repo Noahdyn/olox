@@ -263,6 +263,7 @@ run :: proc() -> InterpretResult {
 			}
 			table_set(&vm.globals, key, peek_vm(0))
 		case u8(OpCode.SET_GLOBAL_LONG):
+			//TODO: byte1-3 lesen zu einer procedure machen
 			byte1 := read_byte()
 			byte2 := read_byte()
 			byte3 := read_byte()
@@ -281,13 +282,21 @@ run :: proc() -> InterpretResult {
 				return .RUNTIME_ERROR
 			}
 			table_set(&vm.globals, key, peek_vm(0))
-
+		case u8(OpCode.JUMP_IF_FALSE):
+			offset := read_short()
+			if is_falsey(peek_vm(0)) do vm.ip = mem.ptr_offset(vm.ip, offset)
+		case u8(OpCode.JUMP):
+			offset := read_short()
+			vm.ip = mem.ptr_offset(vm.ip, offset)
 		case u8(OpCode.GET_LOCAL):
 			slot := read_byte()
 			push_stack(vm.stack[slot])
 		case u8(OpCode.SET_LOCAL):
 			slot := read_byte()
 			vm.stack[slot] = peek_vm(0)
+		case u8(Ocode.LOOP):
+			offset := read_short()
+			vm.ip -= offset
 		}
 	}
 }
@@ -313,6 +322,12 @@ read_constant :: #force_inline proc() -> Value {
 
 read_string :: #force_inline proc() -> ^ObjString {
 	return cast(^ObjString)as_obj(read_constant())
+}
+
+read_short :: #force_inline proc() -> u16 {
+	vm.ip = mem.ptr_offset(vm.ip, 2)
+	return u16((mem.ptr_offset(vm.ip, -2))^) << 8 | u16((mem.ptr_offset(vm.ip, -1))^)
+
 }
 
 peek_vm :: proc(distance: int) -> Value {
