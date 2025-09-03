@@ -294,9 +294,9 @@ run :: proc() -> InterpretResult {
 		case u8(OpCode.SET_LOCAL):
 			slot := read_byte()
 			vm.stack[slot] = peek_vm(0)
-		case u8(Ocode.LOOP):
+		case u8(OpCode.LOOP):
 			offset := read_short()
-			vm.ip -= offset
+			vm.ip = mem.ptr_offset(vm.ip, -offset)
 		}
 	}
 }

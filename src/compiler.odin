@@ -566,6 +566,7 @@ for_statement :: proc() {
 }
 
 if_statement :: proc() {
+	consume(.LEFT_PAREN, "Expect '(' after 'if'.")
 	expression()
 	consume(.RIGHT_PAREN, "Expect ')' after condition.")
 	then_jump := emit_jump(u8(OpCode.JUMP_IF_FALSE))
