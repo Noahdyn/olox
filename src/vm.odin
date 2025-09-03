@@ -297,6 +297,9 @@ run :: proc() -> InterpretResult {
 		case u8(OpCode.LOOP):
 			offset := read_short()
 			vm.ip = mem.ptr_offset(vm.ip, -offset)
+		case u8(OpCode.DUPLICATE):
+			val := peek_vm(0)
+			push_stack(val)
 		}
 	}
 }

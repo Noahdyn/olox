@@ -43,6 +43,8 @@ disassemble_instruction :: proc(chunk: ^Chunk, offset: int) -> int {
 		return simple_instruction("OP_NIL", offset)
 	case .POP:
 		return simple_instruction("OP_POP", offset)
+	case .DUPLICATE:
+		return simple_instruction("OP_DUPLICATE", offset)
 	case .TRUE:
 		return simple_instruction("OP_TRUE", offset)
 	case .FALSE:

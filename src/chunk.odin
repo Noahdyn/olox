@@ -38,6 +38,7 @@ OpCode :: enum u8 {
 	JUMP,
 	LOOP,
 	POP,
+	DUPLICATE,
 	RETURN,
 }
 

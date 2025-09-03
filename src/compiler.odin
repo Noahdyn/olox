@@ -56,6 +56,7 @@ rules: [TokenType]ParseRule = {
 	.MINUS         = {unary, binary, .TERM},
 	.PLUS          = {nil, binary, .TERM},
 	.SEMICOLON     = {nil, nil, .NONE},
+	.COLON         = {nil, nil, .NONE},
 	.SLASH         = {nil, binary, .FACTOR},
 	.STAR          = {nil, binary, .FACTOR},
 	.BANG          = {unary, nil, .NONE},
@@ -85,6 +86,8 @@ rules: [TokenType]ParseRule = {
 	.TRUE          = {literal, nil, .NONE},
 	.VAR           = {nil, nil, .NONE},
 	.WHILE         = {nil, nil, .NONE},
+	.SWITCH        = {nil, nil, .NONE},
+	.CASE          = {nil, nil, .NONE},
 	.FINAL         = {nil, nil, .NONE},
 	.ERROR         = {nil, nil, .NONE},
 	.EOF           = {nil, nil, .NONE},
@@ -580,6 +583,36 @@ if_statement :: proc() {
 	patch_jump(else_jump)
 }
 
+switch_statement :: proc() {
+	consume(.LEFT_PAREN, "Expect '(' after 'switch'.")
+	expression()
+	consume(.RIGHT_PAREN, "Expect ')' after condition.")
+	consume(.LEFT_BRACE, "Expect '{' after switch expression.")
+	exit_jumps: [dynamic]int
+	defer delete(exit_jumps)
+
+	for !match(.RIGHT_BRACE) {
+		emit_byte(u8(OpCode.DUPLICATE))
+		consume(.CASE, "Expect 'case'.")
+		expression()
+		consume(.COLON, "Expect ':' after case value.")
+		emit_byte(u8(OpCode.EQUAL))
+		then_jump := emit_jump(u8(OpCode.JUMP_IF_FALSE))
+		emit_byte(u8(OpCode.POP))
+		statement()
+		append(&exit_jumps, emit_jump(u8(OpCode.JUMP)))
+		patch_jump(then_jump)
+		emit_byte(u8(OpCode.POP))
+	}
+	emit_byte(u8(OpCode.POP))
+
+	for jump in exit_jumps {
+		patch_jump(jump)
+	}
+
+
+}
+
 print_statement :: proc() {
 	expression()
 	consume(.SEMICOLON, "Expect ';' after value.")
@@ -634,6 +667,8 @@ statement :: proc() {
 		for_statement()
 	} else if match(.IF) {
 		if_statement()
+	} else if match(.SWITCH) {
+		switch_statement()
 	} else if match(.WHILE) {
 		while_statement()
 	} else if match(.LEFT_BRACE) {

@@ -27,6 +27,7 @@ TokenType :: enum {
 	MINUS,
 	PLUS,
 	SEMICOLON,
+	COLON,
 	SLASH,
 	STAR,
 	// One or two character tokens.
@@ -50,6 +51,8 @@ TokenType :: enum {
 	FOR,
 	FUN,
 	IF,
+	SWITCH,
+	CASE,
 	NIL,
 	OR,
 	PRINT,
@@ -119,6 +122,8 @@ scan_token :: proc() -> Token {
 		return make_token(.RIGHT_BRACE)
 	case ';':
 		return make_token(.SEMICOLON)
+	case ':':
+		return make_token(.COLON)
 	case ',':
 		return make_token(.COMMA)
 	case '.':
@@ -234,7 +239,14 @@ identifier_type :: proc() -> TokenType {
 	case 'a':
 		return check_keyword(1, 2, "nd", .AND)
 	case 'c':
-		return check_keyword(1, 4, "lass", .CLASS)
+		if uintptr(scanner.current) - uintptr(scanner.start) > 1 {
+			switch mem.ptr_offset(scanner.start, 1)^ {
+			case 'l':
+				return check_keyword(2, 3, "ass", .CLASS)
+			case 'a':
+				return check_keyword(2, 2, "se", .CASE)
+			}
+		}
 	case 'e':
 		return check_keyword(1, 3, "lse", .ELSE)
 	case 'f':
@@ -261,7 +273,14 @@ identifier_type :: proc() -> TokenType {
 	case 'r':
 		return check_keyword(1, 5, "eturn", .RETURN)
 	case 's':
-		return check_keyword(1, 4, "uper", .SUPER)
+		if uintptr(scanner.current) - uintptr(scanner.start) > 1 {
+			switch mem.ptr_offset(scanner.start, 1)^ {
+			case 'u':
+				return check_keyword(2, 3, "per", .SUPER)
+			case 'w':
+				return check_keyword(2, 4, "itch", .SWITCH)
+			}
+		}
 	case 't':
 		if int(uintptr(scanner.current) - uintptr(scanner.start)) > 1 {
 			switch mem.ptr_offset(scanner.start, 1)^ {
