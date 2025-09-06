@@ -37,6 +37,7 @@ OpCode :: enum u8 {
 	JUMP_IF_FALSE,
 	JUMP,
 	LOOP,
+	CALL,
 	POP,
 	DUPLICATE,
 	RETURN,

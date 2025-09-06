@@ -3,14 +3,26 @@ package olox
 import "core:fmt"
 import "core:mem"
 import "core:strings"
+import "core:time"
 
+FRAMES_MAX :: 64
+STACK_MAX :: FRAMES_MAX * 256
+
+CallFrame :: struct {
+	function: ^ObjFunction,
+	ip:       ^u8,
+	slots:    []Value,
+}
 
 VM :: struct {
 	chunk:          ^Chunk,
 	//instruction pointer
 	ip:             ^u8,
 	stack_capacity: int,
-	stack:          [dynamic]Value,
+	frames:         [FRAMES_MAX]CallFrame,
+	frame_count:    int,
+	stack:          [STACK_MAX]Value,
+	stack_top:      int,
 	globals:        Table,
 	strings:        Table,
 	objects:        ^Obj,
@@ -23,29 +35,53 @@ InterpretResult :: enum {
 }
 
 vm: VM
+clock_native :: proc(arg_count: int, args: []Value) -> Value {
+	return number_val(f64(time.now()._nsec))
+}
 DEBUG_TRACE_EXECUTION := false
 
 init_VM :: proc() {
 	reset_stack()
+
+	define_native("clock", clock_native)
 }
 
 reset_stack :: proc() {
-	clear(&vm.stack)
+	vm.stack_top = 0
+	vm.frame_count = 0
 }
 
 runtime_error :: proc(format: string, args: ..any) {
 	fmt.eprintf(format, ..args)
 	fmt.eprintln()
-	instruction := uintptr(vm.ip) - uintptr(raw_data(vm.chunk.code)) - 1
-	line := get_line(vm.chunk, int(instruction))
-	fmt.eprintf("[line %d] in script\n", line)
+
+	for i := vm.frame_count - 1; i >= 0; i -= 1 {
+		frame := &vm.frames[i]
+		function := frame.function
+		instruction_index := int(uintptr(frame.ip) - uintptr(raw_data(function.chunk.code)))
+		fmt.eprintf("[line %d] in ", get_line(&function.chunk, instruction_index))
+		if function.name == nil {
+			fmt.eprintf("script\n")
+		} else {
+			fmt.eprintf("%s()\n", function.name.str)
+		}
+
+	}
+
 	reset_stack()
+}
+
+define_native :: proc(name: string, function: NativeFn) {
+	push_stack(obj_val(copy_string(name)))
+	push_stack(obj_val(new_native(function)))
+	table_set(&vm.globals, vm.stack[0], vm.stack[1])
+	pop_stack()
+	pop_stack()
 }
 
 free_VM :: proc() {
 	free_table(&vm.strings)
 	free_table(&vm.globals)
-	delete(vm.stack)
 	free_objects()
 }
 
@@ -64,42 +100,48 @@ free_object :: proc(object: ^Obj) {
 		o := cast(^ObjString)object
 		delete(o.str)
 		free(o)
+	case .Function:
+		function := cast(^ObjFunction)object
+		free_chunk(&function.chunk)
+		free(function)
+	case .Native:
+		o := cast(^ObjNative)object
+		free(o)
 	}
 }
 
 interpret :: proc(source: string) -> InterpretResult {
-	chunk: Chunk
-	defer free_chunk(&chunk)
+	function := compile(source)
+	if function == nil do return .COMPILE_ERROR
 
-	if !compile(source, &chunk) {
-		return .COMPILE_ERROR
-	}
-	vm.chunk = &chunk
-	vm.ip = raw_data(vm.chunk.code)
-	res := run()
+	push_stack(obj_val(function))
+	call(function, 0)
 
-	return res
+	return run()
 }
 
 push_stack :: proc(val: Value) {
-	append(&vm.stack, val)
+	vm.stack[vm.stack_top] = val
+	vm.stack_top += 1
 }
 
 pop_stack :: proc() -> Value {
-	return pop(&vm.stack)
+	vm.stack_top -= 1
+	return vm.stack[vm.stack_top]
 }
 
 run :: proc() -> InterpretResult {
+	frame := &vm.frames[vm.frame_count - 1]
 	for {
 		if DEBUG_TRACE_EXECUTION {
 			disassemble_instruction(
 				vm.chunk,
-				int(uintptr(vm.ip) - uintptr(raw_data(vm.chunk.code))),
+				int(uintptr(frame.ip) - uintptr(raw_data(frame.function.chunk.code))),
 			)
 			fmt.printf("          ")
-			for val in vm.stack {
+			for i in 0 ..< vm.stack_top {
 				fmt.printf("[ ")
-				print_value(val)
+				print_value(vm.stack[i])
 				fmt.printf(" ]")
 			}
 			fmt.printf("\n")
@@ -107,7 +149,17 @@ run :: proc() -> InterpretResult {
 		instruction := read_byte()
 		switch (instruction) {
 		case u8(OpCode.RETURN):
-			return InterpretResult.OK
+			res := pop_stack()
+			vm.frame_count -= 1
+			if vm.frame_count == 0 {
+				pop_stack()
+				return .OK
+			}
+			vm.stack_top = len(vm.stack) - len(frame.slots)
+
+
+			push_stack(res)
+			frame = &vm.frames[vm.frame_count - 1]
 		case u8(OpCode.CONSTANT):
 			constant := read_constant()
 			push_stack(constant)
@@ -128,17 +180,23 @@ run :: proc() -> InterpretResult {
 		case u8(OpCode.ADD):
 			if is_string(peek_vm(0)) && is_string(peek_vm(1)) {
 				concatenate()
-			} else if is_number(peek_vm(0)) || is_number(peek_vm(1)) {
+			} else if is_number(peek_vm(0)) && is_number(peek_vm(1)) {
+
 				b := as_number(pop_stack())
 				a := as_number(pop_stack())
 				push_stack(number_val(a + b))
 
 			} else {
+				fmt.println(peek_vm(0))
+				fmt.println(peek_vm(1))
+
 				runtime_error("Operands must be numbers.")
 				return .RUNTIME_ERROR
 			}
 		case u8(OpCode.SUBTRACT):
 			if !is_number(peek_vm(0)) || !is_number(peek_vm(1)) {
+				fmt.println(peek_vm(0))
+				fmt.println(peek_vm(1))
 				runtime_error("Operands must be numbers.")
 				return .RUNTIME_ERROR
 			}
@@ -284,22 +342,28 @@ run :: proc() -> InterpretResult {
 			table_set(&vm.globals, key, peek_vm(0))
 		case u8(OpCode.JUMP_IF_FALSE):
 			offset := read_short()
-			if is_falsey(peek_vm(0)) do vm.ip = mem.ptr_offset(vm.ip, offset)
+			if is_falsey(peek_vm(0)) do frame.ip = mem.ptr_offset(frame.ip, offset)
 		case u8(OpCode.JUMP):
 			offset := read_short()
-			vm.ip = mem.ptr_offset(vm.ip, offset)
+			frame.ip = mem.ptr_offset(frame.ip, offset)
 		case u8(OpCode.GET_LOCAL):
 			slot := read_byte()
-			push_stack(vm.stack[slot])
+			push_stack(frame.slots[slot])
 		case u8(OpCode.SET_LOCAL):
 			slot := read_byte()
-			vm.stack[slot] = peek_vm(0)
+			frame.slots[slot] = peek_vm(0)
 		case u8(OpCode.LOOP):
 			offset := read_short()
-			vm.ip = mem.ptr_offset(vm.ip, -offset)
+			frame.ip = mem.ptr_offset(frame.ip, -offset)
 		case u8(OpCode.DUPLICATE):
 			val := peek_vm(0)
 			push_stack(val)
+		case u8(OpCode.CALL):
+			arg_count := read_byte()
+			if !call_value(peek_vm(int(arg_count)), int(arg_count)) {
+				return .RUNTIME_ERROR
+			}
+			frame = &vm.frames[vm.frame_count - 1]
 		}
 	}
 }
@@ -314,13 +378,15 @@ concatenate :: proc() {
 }
 
 read_byte :: #force_inline proc() -> u8 {
-	byte := vm.ip^
-	vm.ip = mem.ptr_offset(vm.ip, 1)
+	frame := &vm.frames[vm.frame_count - 1]
+	byte := frame.ip^
+	frame.ip = mem.ptr_offset(frame.ip, 1)
 	return byte
 }
 
 read_constant :: #force_inline proc() -> Value {
-	return vm.chunk.constants[read_byte()]
+	frame := &vm.frames[vm.frame_count - 1]
+	return frame.function.chunk.constants[read_byte()]
 }
 
 read_string :: #force_inline proc() -> ^ObjString {
@@ -328,13 +394,56 @@ read_string :: #force_inline proc() -> ^ObjString {
 }
 
 read_short :: #force_inline proc() -> u16 {
-	vm.ip = mem.ptr_offset(vm.ip, 2)
-	return u16((mem.ptr_offset(vm.ip, -2))^) << 8 | u16((mem.ptr_offset(vm.ip, -1))^)
-
+	frame := &vm.frames[vm.frame_count - 1]
+	frame.ip = mem.ptr_offset(frame.ip, 2)
+	return u16((mem.ptr_offset(frame.ip, -2))^) << 8 | u16((mem.ptr_offset(frame.ip, -1))^)
 }
 
 peek_vm :: proc(distance: int) -> Value {
-	return vm.stack[len(vm.stack) - 1 - distance]
+	return vm.stack[vm.stack_top - 1 - distance]
+}
+
+call :: proc(function: ^ObjFunction, arg_count: int) -> bool {
+	if arg_count != function.arity {
+		runtime_error("Expected %d arguments but got %d.", function.arity, arg_count)
+		return false
+	}
+
+	if vm.frame_count == FRAMES_MAX {
+		runtime_error("Stack overflow.")
+		return false
+	}
+	frame := &vm.frames[vm.frame_count]
+	vm.frame_count += 1
+	frame.function = function
+	frame.ip = raw_data(function.chunk.code)
+
+	slots_start := vm.stack_top - arg_count - 1
+	frame.slots = vm.stack[slots_start:]
+
+	return true
+}
+
+call_value :: proc(callee: Value, arg_count: int) -> bool {
+	if is_obj(callee) {
+		obj := as_obj(callee)
+		#partial switch obj.type {
+		case .Function:
+			return call(as_function(callee), arg_count)
+		case .Native:
+			native := as_native(callee)
+			res := native(arg_count, vm.stack[vm.stack_top - arg_count:vm.stack_top])
+
+			vm.stack_top -= arg_count + 1
+			push_stack(res)
+			return true
+		case:
+			break
+
+		}
+	}
+	runtime_error("Can only call functions and classes.")
+	return false
 }
 
 is_falsey :: proc(val: Value) -> bool {

@@ -74,6 +74,8 @@ init_scanner :: proc(source: string) {
 	scanner.end = mem.ptr_offset(raw_data(source), len(source))
 	scanner.current = raw_data(source)
 	scanner.line = 1
+
+
 }
 
 advance_scanner :: proc() -> u8 {

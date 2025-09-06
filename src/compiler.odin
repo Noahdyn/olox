@@ -36,6 +36,9 @@ ParseRule :: struct {
 }
 
 Compiler :: struct {
+	enclosing:   ^Compiler,
+	function:    ^ObjFunction,
+	type:        FunctionType,
 	locals:      [dynamic]Local,
 	scope_depth: int,
 }
@@ -46,8 +49,13 @@ Local :: struct {
 	final: bool,
 }
 
+FunctionType :: enum {
+	FUNCTION,
+	SCRIPT,
+}
+
 rules: [TokenType]ParseRule = {
-	.LEFT_PAREN    = {grouping, nil, .NONE},
+	.LEFT_PAREN    = {grouping, call, .CALL},
 	.RIGHT_PAREN   = {nil, nil, .NONE},
 	.LEFT_BRACE    = {nil, nil, .NONE},
 	.RIGHT_BRACE   = {nil, nil, .NONE},
@@ -99,22 +107,24 @@ current: ^Compiler
 compiling_chunk: ^Chunk
 
 current_chunk :: proc() -> ^Chunk {
-	return compiling_chunk
+	return &current.function.chunk
 }
 
-compile :: proc(source: string, chunk: ^Chunk) -> bool {
+compile :: proc(source: string) -> ^ObjFunction {
 	init_scanner(source)
+
 	compiler: Compiler
-	init_compiler(&compiler)
+	init_compiler(&compiler, .SCRIPT)
 	defer free_compiler(&compiler)
-	compiling_chunk = chunk
+
 
 	advance()
 	for !match(.EOF) {
 		declaration()
 	}
-	end_compiler()
-	return !parser.had_error
+
+	function := end_compiler()
+	return parser.had_error ? nil : function
 }
 
 advance :: proc() {
@@ -175,11 +185,16 @@ emit_jump :: proc(instruction: u8) -> int {
 	return len((current_chunk().code)) - 2
 }
 
-end_compiler :: proc() {
+end_compiler :: proc() -> ^ObjFunction {
 	emit_return()
+	function := current.function
+
 	if DEBUG_PRINT_CODE && !parser.had_error {
-		disassemble_chunk(current_chunk(), "code")
+		disassemble_chunk(current_chunk(), function.name != nil ? function.name.str : "<script>")
 	}
+
+	current = current.enclosing
+	return function
 }
 
 begin_scope :: proc() {
@@ -359,6 +374,12 @@ binary :: proc(can_assign: bool) {
 	}
 }
 
+@(private = "file")
+call :: proc(can_assign: bool) {
+	arg_count := argument_list()
+	emit_bytes(u8(OpCode.CALL), arg_count)
+}
+
 literal :: proc(can_assign: bool) {
 	#partial switch parser.previous.type {
 	case .FALSE:
@@ -444,13 +465,16 @@ declare_variable :: proc(final: bool = false) {
 parse_variable :: proc(error_msg: string, final: bool = false) -> int {
 	consume(.IDENTIFIER, error_msg)
 
-	declare_variable(final)
-	if current.scope_depth > 0 do return 0
+	if current.scope_depth > 0 {
+		declare_variable(final)
+		return 0
+	}
 
 	return identifier_constant(&parser.previous)
 }
 
 mark_initialized :: proc() {
+	if current.scope_depth == 0 do return
 	current.locals[len(&current.locals) - 1].depth = current.scope_depth
 }
 
@@ -482,6 +506,22 @@ define_variable :: proc(global: int, final: bool) {
 	}
 }
 
+argument_list :: proc() -> u8 {
+	arg_count: u8 = 0
+	if !check(.RIGHT_PAREN) {
+		for {
+			expression()
+			if arg_count == 255 {
+				error("Can't have more than 255 characters")
+			}
+			arg_count += 1
+			if !match(.COMMA) do break
+		}
+	}
+	consume(.RIGHT_PAREN, "Expect ')' after arguments.")
+	return arg_count
+}
+
 and_proc :: proc(can_assign: bool) {
 	end_jump := emit_jump(u8(OpCode.JUMP_IF_FALSE))
 	emit_byte(u8(OpCode.POP))
@@ -503,6 +543,38 @@ block :: proc() {
 	}
 	consume(.RIGHT_BRACE, "Expect '}' after block.")
 
+}
+
+function :: proc(type: FunctionType) {
+	compiler: Compiler
+	init_compiler(&compiler, type)
+	begin_scope()
+
+	consume(.LEFT_PAREN, "Expect '(' after function name.")
+	if !check(.RIGHT_PAREN) {
+		for {
+			current.function.arity += 1
+			if current.function.arity > 255 {
+				error_at_current("Can't have more than 255 parameters.")
+			}
+			constant := parse_variable("Expect parameter name.")
+			define_variable(constant, false)
+			if !match(.COMMA) do break
+		}
+	}
+	consume(.RIGHT_PAREN, "Expect ')' after parameters.")
+	consume(.LEFT_BRACE, "Expect '{' before function body.")
+	block()
+
+	function := end_compiler()
+	emit_constant(obj_val(function))
+}
+
+fun_declaration :: proc() {
+	global := parse_variable("Expect function name.")
+	mark_initialized()
+	function(.FUNCTION)
+	define_variable(global, false)
 }
 
 var_declaration :: proc(final: bool = false) {
@@ -619,6 +691,19 @@ print_statement :: proc() {
 	emit_byte(u8(OpCode.PRINT))
 }
 
+return_statement :: proc() {
+	if current.type == .SCRIPT {
+		error("Can't return from top-level code.")
+	}
+	if match(.SEMICOLON) {
+		emit_return()
+	} else {
+		expression()
+		consume(.SEMICOLON, "Expect ';' after return statement.")
+		emit_byte(u8(OpCode.RETURN))
+	}
+}
+
 while_statement :: proc() {
 	loop_start := len(current_chunk().code)
 	consume(.LEFT_PAREN, "Expect '(' after 'while'.")
@@ -650,7 +735,9 @@ synchronize :: proc() {
 }
 
 declaration :: proc() {
-	if match(.VAR) {
+	if match(.FUN) {
+		fun_declaration()
+	} else if match(.VAR) {
 		var_declaration()
 	} else if match(.FINAL) {
 		var_declaration(final = true)
@@ -667,6 +754,8 @@ statement :: proc() {
 		for_statement()
 	} else if match(.IF) {
 		if_statement()
+	} else if match(.RETURN) {
+		return_statement()
 	} else if match(.SWITCH) {
 		switch_statement()
 	} else if match(.WHILE) {
@@ -681,6 +770,7 @@ statement :: proc() {
 }
 
 emit_return :: proc() {
+	emit_byte(u8(OpCode.NIL))
 	emit_byte(u8(OpCode.RETURN))
 }
 
@@ -699,8 +789,22 @@ patch_jump :: proc(offset: int) {
 	current_chunk().code[offset + 1] = u8(jump & 0xff)
 }
 
-init_compiler :: proc(compiler: ^Compiler) {
+init_compiler :: proc(compiler: ^Compiler, type: FunctionType) {
+	compiler.enclosing = current
+	compiler.type = type
+	compiler.function = new_function()
 	current = compiler
+
+	if type != .SCRIPT {
+		string_data := string(mem.slice_ptr(parser.previous.start, parser.previous.length))
+		current.function.name = copy_string(string_data)
+	}
+	empty_str := ""
+
+	//reserve local slot for internal use
+	append(&current.locals, Local{name = Token{start = raw_data(empty_str)}})
+
+
 }
 
 free_compiler :: proc(compiler: ^Compiler) {

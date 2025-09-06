@@ -37,7 +37,10 @@ hash_value :: proc(val: Value) -> u32 {
 		case .String:
 			str_obj := cast(^ObjString)obj
 			return str_obj.hash
+		case .Function, .Native:
+			error("cannot use functions as hash map keys.")
 		}
+
 	}
 	return 0
 }
