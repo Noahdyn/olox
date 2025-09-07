@@ -54,9 +54,9 @@ disassemble_instruction :: proc(chunk: ^Chunk, offset: int) -> int {
 	case .EQUAL:
 		return simple_instruction("OP_EQUAL", offset)
 	case .GREATER:
-		return simple_instruction("OP_EQUAL", offset)
+		return simple_instruction("OP_GREATER", offset)
 	case .LESS:
-		return simple_instruction("OP_EQUAL", offset)
+		return simple_instruction("OP_LESS", offset)
 	case .DEFINE_GLOBAL:
 		return constant_instruction("OP_DEFINE_GLOBAL", chunk, offset)
 	case .DEFINE_GLOBAL_LONG:

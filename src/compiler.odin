@@ -70,7 +70,7 @@ rules: [TokenType]ParseRule = {
 	.BANG          = {unary, nil, .NONE},
 	.BANG_EQUAL    = {nil, binary, .EQUALITY},
 	.EQUAL         = {nil, nil, .NONE},
-	.EQUAL_EQUAL   = {nil, binary, .COMPARISON},
+	.EQUAL_EQUAL   = {nil, binary, .EQUALITY},
 	.GREATER       = {nil, binary, .COMPARISON},
 	.GREATER_EQUAL = {nil, binary, .COMPARISON},
 	.LESS          = {nil, binary, .COMPARISON},
@@ -170,6 +170,8 @@ emit_bytes :: proc(byte1, byte2: u8) {
 
 emit_loop :: proc(loop_start: int) {
 	emit_byte(u8(OpCode.LOOP))
+	fmt.println("Emitting loop with")
+	fmt.println(loop_start)
 
 	offset := len(current_chunk().code) - loop_start + 2
 	if offset > int(max(u16)) do error("Loop body too large.")
@@ -608,12 +610,14 @@ for_statement :: proc() {
 	}
 
 	loop_start := len(current_chunk().code)
+	fmt.println("YYY")
+	fmt.println(loop_start)
 
 	exit_jump := -1
 	if !match(.SEMICOLON) {
 		expression()
 		consume(.SEMICOLON, "Expect ';' after loop condition.")
-		exit_jump := emit_jump(u8(OpCode.JUMP_IF_FALSE))
+		exit_jump = emit_jump(u8(OpCode.JUMP_IF_FALSE))
 		emit_byte(u8(OpCode.POP))
 	}
 
@@ -627,6 +631,7 @@ for_statement :: proc() {
 		emit_loop(loop_start)
 		loop_start = increment_start
 		patch_jump(body_jump)
+		fmt.printf("Body jump: %d", body_jump)
 	}
 
 	statement()
@@ -637,6 +642,11 @@ for_statement :: proc() {
 		emit_byte(u8(OpCode.POP))
 	}
 	end_scope()
+
+	fmt.printf("Loop start: %d, Exit jump: %d\n", loop_start, exit_jump)
+	fmt.println("XX")
+	disassemble_chunk(current_chunk(), "Test")
+
 
 }
 

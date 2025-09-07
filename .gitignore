@@ -1,7 +1,5 @@
 *
 
-!benchmark/
-!benchmark/**
 !src/
 !src/**
 

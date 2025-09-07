@@ -10,7 +10,7 @@ STACK_MAX :: FRAMES_MAX * 256
 
 CallFrame :: struct {
 	function: ^ObjFunction,
-	ip:       ^u8,
+	ip:       int,
 	slots:    []Value,
 }
 
@@ -38,6 +38,7 @@ vm: VM
 clock_native :: proc(arg_count: int, args: []Value) -> Value {
 	return number_val(f64(time.now()._nsec))
 }
+
 DEBUG_TRACE_EXECUTION := false
 
 init_VM :: proc() {
@@ -135,7 +136,7 @@ run :: proc() -> InterpretResult {
 	for {
 		if DEBUG_TRACE_EXECUTION {
 			disassemble_instruction(
-				vm.chunk,
+				&frame.function.chunk,
 				int(uintptr(frame.ip) - uintptr(raw_data(frame.function.chunk.code))),
 			)
 			fmt.printf("          ")
@@ -156,7 +157,6 @@ run :: proc() -> InterpretResult {
 				return .OK
 			}
 			vm.stack_top = len(vm.stack) - len(frame.slots)
-
 
 			push_stack(res)
 			frame = &vm.frames[vm.frame_count - 1]
@@ -187,16 +187,11 @@ run :: proc() -> InterpretResult {
 				push_stack(number_val(a + b))
 
 			} else {
-				fmt.println(peek_vm(0))
-				fmt.println(peek_vm(1))
-
 				runtime_error("Operands must be numbers.")
 				return .RUNTIME_ERROR
 			}
 		case u8(OpCode.SUBTRACT):
 			if !is_number(peek_vm(0)) || !is_number(peek_vm(1)) {
-				fmt.println(peek_vm(0))
-				fmt.println(peek_vm(1))
 				runtime_error("Operands must be numbers.")
 				return .RUNTIME_ERROR
 			}
@@ -342,10 +337,10 @@ run :: proc() -> InterpretResult {
 			table_set(&vm.globals, key, peek_vm(0))
 		case u8(OpCode.JUMP_IF_FALSE):
 			offset := read_short()
-			if is_falsey(peek_vm(0)) do frame.ip = mem.ptr_offset(frame.ip, offset)
+			if is_falsey(peek_vm(0)) do frame.ip += int(offset)
 		case u8(OpCode.JUMP):
 			offset := read_short()
-			frame.ip = mem.ptr_offset(frame.ip, offset)
+			frame.ip += int(offset)
 		case u8(OpCode.GET_LOCAL):
 			slot := read_byte()
 			push_stack(frame.slots[slot])
@@ -354,7 +349,7 @@ run :: proc() -> InterpretResult {
 			frame.slots[slot] = peek_vm(0)
 		case u8(OpCode.LOOP):
 			offset := read_short()
-			frame.ip = mem.ptr_offset(frame.ip, -offset)
+			frame.ip -= int(offset)
 		case u8(OpCode.DUPLICATE):
 			val := peek_vm(0)
 			push_stack(val)
@@ -379,8 +374,8 @@ concatenate :: proc() {
 
 read_byte :: #force_inline proc() -> u8 {
 	frame := &vm.frames[vm.frame_count - 1]
-	byte := frame.ip^
-	frame.ip = mem.ptr_offset(frame.ip, 1)
+	byte := frame.function.chunk.code[frame.ip]
+	frame.ip += 1
 	return byte
 }
 
@@ -395,8 +390,11 @@ read_string :: #force_inline proc() -> ^ObjString {
 
 read_short :: #force_inline proc() -> u16 {
 	frame := &vm.frames[vm.frame_count - 1]
-	frame.ip = mem.ptr_offset(frame.ip, 2)
-	return u16((mem.ptr_offset(frame.ip, -2))^) << 8 | u16((mem.ptr_offset(frame.ip, -1))^)
+	frame.ip += 2
+	return(
+		u16(frame.function.chunk.code[frame.ip - 2]) << 8 |
+		u16(frame.function.chunk.code[frame.ip - 1]) \
+	)
 }
 
 peek_vm :: proc(distance: int) -> Value {
@@ -416,7 +414,7 @@ call :: proc(function: ^ObjFunction, arg_count: int) -> bool {
 	frame := &vm.frames[vm.frame_count]
 	vm.frame_count += 1
 	frame.function = function
-	frame.ip = raw_data(function.chunk.code)
+	frame.ip = 0
 
 	slots_start := vm.stack_top - arg_count - 1
 	frame.slots = vm.stack[slots_start:]
