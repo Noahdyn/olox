@@ -9,9 +9,9 @@ FRAMES_MAX :: 64
 STACK_MAX :: FRAMES_MAX * 256
 
 CallFrame :: struct {
-	function: ^ObjFunction,
-	ip:       int,
-	slots:    []Value,
+	closure: ^ObjClosure,
+	ip:      int,
+	slots:   []Value,
 }
 
 VM :: struct {
@@ -25,6 +25,7 @@ VM :: struct {
 	stack_top:      int,
 	globals:        Table,
 	strings:        Table,
+	open_upvalues:  ^ObjUpvalue,
 	objects:        ^Obj,
 }
 
@@ -58,7 +59,7 @@ runtime_error :: proc(format: string, args: ..any) {
 
 	for i := vm.frame_count - 1; i >= 0; i -= 1 {
 		frame := &vm.frames[i]
-		function := frame.function
+		function := frame.closure.function
 		instruction_index := int(uintptr(frame.ip) - uintptr(raw_data(function.chunk.code)))
 		fmt.eprintf("[line %d] in ", get_line(&function.chunk, instruction_index))
 		if function.name == nil {
@@ -108,6 +109,14 @@ free_object :: proc(object: ^Obj) {
 	case .Native:
 		o := cast(^ObjNative)object
 		free(o)
+	case .Closure:
+		o := cast(^ObjClosure)object
+		delete(o.upvalues)
+		free(o)
+	case .Upvalue:
+		o := cast(^Upvalue)object
+		free(o)
+
 	}
 }
 
@@ -116,7 +125,10 @@ interpret :: proc(source: string) -> InterpretResult {
 	if function == nil do return .COMPILE_ERROR
 
 	push_stack(obj_val(function))
-	call(function, 0)
+	closure := new_closure(function)
+	pop_stack()
+	push_stack(obj_val(closure))
+	call(closure, 0)
 
 	return run()
 }
@@ -135,10 +147,8 @@ run :: proc() -> InterpretResult {
 	frame := &vm.frames[vm.frame_count - 1]
 	for {
 		if DEBUG_TRACE_EXECUTION {
-			disassemble_instruction(
-				&frame.function.chunk,
-				int(uintptr(frame.ip) - uintptr(raw_data(frame.function.chunk.code))),
-			)
+			disassemble_instruction(&frame.closure.function.chunk, frame.ip)
+
 			fmt.printf("          ")
 			for i in 0 ..< vm.stack_top {
 				fmt.printf("[ ")
@@ -148,9 +158,11 @@ run :: proc() -> InterpretResult {
 			fmt.printf("\n")
 		}
 		instruction := read_byte()
+
 		switch (instruction) {
 		case u8(OpCode.RETURN):
 			res := pop_stack()
+			close_upvalues(&frame.slots[0])
 			vm.frame_count -= 1
 			if vm.frame_count == 0 {
 				pop_stack()
@@ -359,6 +371,28 @@ run :: proc() -> InterpretResult {
 				return .RUNTIME_ERROR
 			}
 			frame = &vm.frames[vm.frame_count - 1]
+		case u8(OpCode.CLOSURE):
+			function := as_function(read_constant())
+			closure := new_closure(function)
+			push_stack(obj_val(closure))
+			for i := 0; i < len(closure.upvalues); i += 1 {
+				is_local := bool(read_byte())
+				idx := read_byte()
+				if is_local {
+					closure.upvalues[i] = capture_upvalue(&frame.slots[idx])
+				} else {
+					closure.upvalues[i] = frame.closure.upvalues[idx]
+				}
+			}
+		case u8(OpCode.GET_UPVALUE):
+			slot := read_byte()
+			push_stack(frame.closure.upvalues[slot].location^)
+		case u8(OpCode.SET_UPVALUE):
+			slot := read_byte()
+			frame.closure.upvalues[slot].location^ = peek_vm(0)
+		case u8(OpCode.CLOSE_UPVALUE):
+			close_upvalues(&vm.stack[vm.stack_top - 1])
+			pop_stack()
 		}
 	}
 }
@@ -374,14 +408,14 @@ concatenate :: proc() {
 
 read_byte :: #force_inline proc() -> u8 {
 	frame := &vm.frames[vm.frame_count - 1]
-	byte := frame.function.chunk.code[frame.ip]
+	byte := frame.closure.function.chunk.code[frame.ip]
 	frame.ip += 1
 	return byte
 }
 
 read_constant :: #force_inline proc() -> Value {
 	frame := &vm.frames[vm.frame_count - 1]
-	return frame.function.chunk.constants[read_byte()]
+	return frame.closure.function.chunk.constants[read_byte()]
 }
 
 read_string :: #force_inline proc() -> ^ObjString {
@@ -392,8 +426,8 @@ read_short :: #force_inline proc() -> u16 {
 	frame := &vm.frames[vm.frame_count - 1]
 	frame.ip += 2
 	return(
-		u16(frame.function.chunk.code[frame.ip - 2]) << 8 |
-		u16(frame.function.chunk.code[frame.ip - 1]) \
+		u16(frame.closure.function.chunk.code[frame.ip - 2]) << 8 |
+		u16(frame.closure.function.chunk.code[frame.ip - 1]) \
 	)
 }
 
@@ -401,9 +435,9 @@ peek_vm :: proc(distance: int) -> Value {
 	return vm.stack[vm.stack_top - 1 - distance]
 }
 
-call :: proc(function: ^ObjFunction, arg_count: int) -> bool {
-	if arg_count != function.arity {
-		runtime_error("Expected %d arguments but got %d.", function.arity, arg_count)
+call :: proc(closure: ^ObjClosure, arg_count: int) -> bool {
+	if arg_count != closure.function.arity {
+		runtime_error("Expected %d arguments but got %d.", closure.function.arity, arg_count)
 		return false
 	}
 
@@ -413,7 +447,7 @@ call :: proc(function: ^ObjFunction, arg_count: int) -> bool {
 	}
 	frame := &vm.frames[vm.frame_count]
 	vm.frame_count += 1
-	frame.function = function
+	frame.closure = closure
 	frame.ip = 0
 
 	slots_start := vm.stack_top - arg_count - 1
@@ -426,8 +460,6 @@ call_value :: proc(callee: Value, arg_count: int) -> bool {
 	if is_obj(callee) {
 		obj := as_obj(callee)
 		#partial switch obj.type {
-		case .Function:
-			return call(as_function(callee), arg_count)
 		case .Native:
 			native := as_native(callee)
 			res := native(arg_count, vm.stack[vm.stack_top - arg_count:vm.stack_top])
@@ -435,6 +467,8 @@ call_value :: proc(callee: Value, arg_count: int) -> bool {
 			vm.stack_top -= arg_count + 1
 			push_stack(res)
 			return true
+		case .Closure:
+			return call(as_closure(callee), arg_count)
 		case:
 			break
 
@@ -442,6 +476,38 @@ call_value :: proc(callee: Value, arg_count: int) -> bool {
 	}
 	runtime_error("Can only call functions and classes.")
 	return false
+}
+
+capture_upvalue :: proc(local: ^Value) -> ^ObjUpvalue {
+	prev_upvalue: ^ObjUpvalue = nil
+	upvalue := vm.open_upvalues
+
+	for upvalue != nil && upvalue.location > local {
+		prev_upvalue = upvalue
+		upvalue = upvalue.next_upvalue
+	}
+
+	if upvalue != nil && upvalue.location == local {
+		return upvalue
+	}
+	created_upvalue := new_upvalue(local)
+
+	if prev_upvalue == nil {
+		vm.open_upvalues = created_upvalue
+	} else {
+		prev_upvalue.next_upvalue = created_upvalue
+	}
+
+	return created_upvalue
+}
+
+close_upvalues :: proc(last: ^Value) {
+	for vm.open_upvalues != nil && vm.open_upvalues.location >= last {
+		upvalue := vm.open_upvalues
+		upvalue.closed = upvalue.location^
+		upvalue.location = &upvalue.closed
+		vm.open_upvalues = upvalue.next_upvalue
+	}
 }
 
 is_falsey :: proc(val: Value) -> bool {

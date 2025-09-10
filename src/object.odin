@@ -8,6 +8,8 @@ NativeFn :: proc(arg_count: int, args: []Value) -> Value
 ObjType :: enum {
 	String,
 	Function,
+	Closure,
+	Upvalue,
 	Native,
 }
 
@@ -23,10 +25,24 @@ ObjString :: struct {
 }
 
 ObjFunction :: struct {
+	using obj:     Obj,
+	upvalue_count: int,
+	arity:         int,
+	chunk:         Chunk,
+	name:          ^ObjString,
+}
+
+ObjClosure :: struct {
 	using obj: Obj,
-	arity:     int,
-	chunk:     Chunk,
-	name:      ^ObjString,
+	function:  ^ObjFunction,
+	upvalues:  [dynamic]^ObjUpvalue,
+}
+
+ObjUpvalue :: struct {
+	using obj:    Obj,
+	location:     ^Value,
+	closed:       Value,
+	next_upvalue: ^ObjUpvalue,
 }
 
 ObjNative :: struct {
@@ -38,6 +54,20 @@ ObjNative :: struct {
 new_function :: proc() -> ^ObjFunction {
 	function := allocate_obj(ObjFunction, .Function)
 	return function
+}
+
+new_closure :: proc(function: ^ObjFunction) -> ^ObjClosure {
+	upvalues := make([dynamic]^ObjUpvalue, function.upvalue_count)
+	closure := allocate_obj(ObjClosure, .Closure)
+	closure.upvalues = upvalues
+	closure.function = function
+	return closure
+}
+
+new_upvalue :: proc(slot: ^Value) -> ^ObjUpvalue {
+	upvalue := allocate_obj(ObjUpvalue, .Upvalue)
+	upvalue.location = slot
+	return upvalue
 }
 
 new_native :: proc(function: NativeFn) -> ^ObjNative {
@@ -63,8 +93,16 @@ is_native :: #force_inline proc(val: Value) -> bool {
 	return is_obj_type(val, .Native)
 }
 
+is_closure :: #force_inline proc(val: Value) -> bool {
+	return is_obj_type(val, .Closure)
+}
+
 as_function :: #force_inline proc(val: Value) -> ^ObjFunction {
 	return cast(^ObjFunction)(as_obj(val))
+}
+
+as_closure :: #force_inline proc(val: Value) -> ^ObjClosure {
+	return cast(^ObjClosure)(as_obj(val))
 }
 
 as_native :: #force_inline proc(val: Value) -> NativeFn {
@@ -123,5 +161,9 @@ print_object :: proc(val: Value) {
 		print_function(as_function(val))
 	case .Native:
 		fmt.print("<native fn>")
+	case .Upvalue:
+		fmt.printf("upvalue")
+	case .Closure:
+		print_function(as_closure(val).function)
 	}
 }

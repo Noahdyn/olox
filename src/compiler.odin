@@ -7,6 +7,8 @@ import "core:strings"
 
 DEBUG_PRINT_CODE :: false
 
+U8_MAX :: max(u8)
+
 ParseFn :: proc(can_assign: bool)
 
 Parser :: struct {
@@ -40,13 +42,20 @@ Compiler :: struct {
 	function:    ^ObjFunction,
 	type:        FunctionType,
 	locals:      [dynamic]Local,
+	upvalues:    [U8_MAX]Upvalue,
 	scope_depth: int,
 }
 
 Local :: struct {
-	name:  Token,
-	depth: int,
-	final: bool,
+	name:        Token,
+	depth:       int,
+	final:       bool,
+	is_captured: bool,
+}
+
+Upvalue :: struct {
+	idx:      u8,
+	is_local: bool,
 }
 
 FunctionType :: enum {
@@ -170,8 +179,6 @@ emit_bytes :: proc(byte1, byte2: u8) {
 
 emit_loop :: proc(loop_start: int) {
 	emit_byte(u8(OpCode.LOOP))
-	fmt.println("Emitting loop with")
-	fmt.println(loop_start)
 
 	offset := len(current_chunk().code) - loop_start + 2
 	if offset > int(max(u16)) do error("Loop body too large.")
@@ -208,8 +215,11 @@ end_scope :: proc() {
 
 	for len(&current.locals) > 0 &&
 	    current.locals[len(&current.locals) - 1].depth > current.scope_depth {
-		emit_byte(u8(OpCode.POP))
-		pop(&current.locals)
+		if current.locals[len(current.locals) - 1].is_captured {
+			emit_byte(u8(OpCode.CLOSE_UPVALUE))
+		} else {
+			pop(&current.locals)
+		}
 	}
 }
 
@@ -249,6 +259,8 @@ named_variable :: proc(name: ^Token, can_assign: bool) {
 	get_op, get_op_long, set_op, set_op_long: u8
 	arg := resolve_local(current, name)
 
+	//TODO: refactor dieses 3x selber code 
+
 	if arg != -1 {
 		// Local variable
 		get_op = u8(OpCode.GET_LOCAL)
@@ -287,6 +299,15 @@ named_variable :: proc(name: ^Token, can_assign: bool) {
 				emit_byte(byte2)
 				emit_byte(byte3)
 			}
+		}
+	} else if uvarg := resolve_upvalue(current, name); uvarg != -1 {
+		set_op = u8(OpCode.SET_UPVALUE)
+		get_op = u8(OpCode.GET_UPVALUE)
+
+		if can_assign && match(.EQUAL) {
+			emit_bytes(set_op, u8(uvarg))
+		} else {
+			emit_bytes(get_op, u8(uvarg))
 		}
 	} else {
 		// Global variable
@@ -441,6 +462,40 @@ resolve_local :: proc(compiler: ^Compiler, name: ^Token) -> int {
 	return -1
 }
 
+add_upvalue :: proc(compiler: ^Compiler, idx: u8, is_local: bool) -> int {
+	upvalue_count := compiler.function.upvalue_count
+
+	for i := 0; i < upvalue_count; i += 1 {
+		upvalue := compiler.upvalues[i]
+		if upvalue.idx == idx && upvalue.is_local == is_local do return i
+	}
+
+	if upvalue_count == int(U8_MAX) {
+		error("Too many closure variables in function.")
+		return 0
+	}
+
+	compiler.upvalues[upvalue_count].is_local = is_local
+	compiler.upvalues[upvalue_count].idx = idx
+	compiler.function.upvalue_count += 1
+	return compiler.function.upvalue_count - 1
+}
+
+resolve_upvalue :: proc(compiler: ^Compiler, name: ^Token) -> int {
+	if compiler.enclosing == nil do return -1
+
+	local := resolve_local(compiler.enclosing, name)
+	if local != -1 {
+		compiler.enclosing.locals[local].is_captured = true
+		return add_upvalue(compiler, u8(local), true)
+	}
+
+	upvalue := resolve_upvalue(compiler.enclosing, name)
+	if upvalue != -1 do return add_upvalue(compiler, u8(upvalue), false)
+
+	return -1
+}
+
 add_local :: proc(name: Token, final: bool = false) {
 	local: Local
 	local.name = name
@@ -569,8 +624,16 @@ function :: proc(type: FunctionType) {
 	block()
 
 	function := end_compiler()
-	emit_constant(obj_val(function))
+
+	constant_idx := add_constant(current_chunk(), obj_val(function))
+	emit_bytes(u8(OpCode.CLOSURE), u8(constant_idx))
+
+	for i in 0 ..< function.upvalue_count {
+		emit_byte(compiler.upvalues[i].is_local ? 1 : 0)
+		emit_byte(compiler.upvalues[i].idx)
+	}
 }
+
 
 fun_declaration :: proc() {
 	global := parse_variable("Expect function name.")
@@ -610,8 +673,6 @@ for_statement :: proc() {
 	}
 
 	loop_start := len(current_chunk().code)
-	fmt.println("YYY")
-	fmt.println(loop_start)
 
 	exit_jump := -1
 	if !match(.SEMICOLON) {
@@ -642,10 +703,6 @@ for_statement :: proc() {
 		emit_byte(u8(OpCode.POP))
 	}
 	end_scope()
-
-	fmt.printf("Loop start: %d, Exit jump: %d\n", loop_start, exit_jump)
-	fmt.println("XX")
-	disassemble_chunk(current_chunk(), "Test")
 
 
 }

@@ -12,7 +12,6 @@ disassemble_chunk :: proc(chunk: ^Chunk, name: string) {
 }
 
 disassemble_instruction :: proc(chunk: ^Chunk, offset: int) -> int {
-	fmt.printf("%04d ", offset)
 	if offset > 0 && get_line(chunk, offset) == get_line(chunk, offset - 1) {
 		fmt.printf("   | ")
 	} else {
@@ -89,6 +88,34 @@ disassemble_instruction :: proc(chunk: ^Chunk, offset: int) -> int {
 		return jump_instruction("OP_LOOP", -1, chunk, offset)
 	case .CALL:
 		return byte_instruction("OP_CALL", chunk, offset)
+	case .CLOSURE:
+		new_offset := offset + 1
+		constant := chunk.code[new_offset]
+		new_offset = new_offset + 1
+		fmt.printf("%-16s %4d ", "OP_CLOSURE", constant)
+		print_value(chunk.constants[constant])
+		fmt.println()
+
+		func := as_function(chunk.constants[constant])
+		for j := 0; j < func.upvalue_count; j += 1 {
+			is_local := chunk.code[new_offset]
+			new_offset += 1
+			idx := chunk.code[new_offset]
+			new_offset += 1
+			fmt.printf(
+				"%04d      |                     %s %d\n",
+				new_offset - 2,
+				is_local != 0 ? "local" : "upvalue",
+				idx,
+			)
+		}
+		return new_offset
+	case .GET_UPVALUE:
+		return byte_instruction("OP_GET_UPVALUE", chunk, offset)
+	case .SET_UPVALUE:
+		return byte_instruction("OP_SET_UPVALUE", chunk, offset)
+	case .CLOSE_UPVALUE:
+		return simple_instruction("OP_CLOSE_UPVALUE", offset)
 	case:
 		fmt.println("Unknown opcode ", instruction)
 		return offset + 1

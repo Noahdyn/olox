@@ -1,5 +1,7 @@
 package olox
 
+import "core:fmt"
+
 Chunk :: struct {
 	code:      [dynamic]u8,
 	constants: [dynamic]Value,
@@ -22,6 +24,8 @@ OpCode :: enum u8 {
 	GET_LOCAL_LONG,
 	SET_LOCAL,
 	SET_LOCAL_LONG,
+	GET_UPVALUE,
+	SET_UPVALUE,
 	ADD,
 	SUBTRACT,
 	MULTIPLY,
@@ -40,6 +44,8 @@ OpCode :: enum u8 {
 	CALL,
 	POP,
 	DUPLICATE,
+	CLOSURE,
+	CLOSE_UPVALUE,
 	RETURN,
 }
 
