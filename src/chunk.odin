@@ -101,7 +101,9 @@ write_constant :: proc(chunk: ^Chunk, val: Value, line: int) -> int {
 }
 
 add_constant :: proc(chunk: ^Chunk, val: Value) -> int {
+	push_stack(val)
 	append(&chunk.constants, val)
+	pop_stack()
 	return len(chunk.constants) - 1
 }
 

@@ -14,8 +14,9 @@ ObjType :: enum {
 }
 
 Obj :: struct {
-	type: ObjType,
-	next: ^Obj,
+	type:      ObjType,
+	next:      ^Obj,
+	is_marked: bool,
 }
 
 ObjString :: struct {
@@ -131,13 +132,15 @@ allocate_string :: proc(str: string, hash: u32) -> ^ObjString {
 	s := allocate_obj(ObjString, .String)
 	s.str = str
 	s.hash = hash
+	push_stack(obj_val(s))
 	table_set(&vm.strings, obj_val(s), nil_val())
+	pop_stack()
 	return s
 }
 
 hash_string :: proc(str: string) -> u32 {
 	hash: u32 = 2166136261
-	for i := 0; i < len(str); i += 1 {
+	for i in 0 ..< len(str) {
 		hash ~= u32(str[i])
 		hash *= 16777619
 	}
@@ -149,6 +152,11 @@ allocate_obj :: proc($T: typeid, type: ObjType) -> ^T {
 	object.type = type
 	object.next = vm.objects
 	vm.objects = object
+	vm.bytes_allocated += size_of(T)
+
+	if DEBUG_LOG_GC {
+		fmt.println("%p allocate %zu for %d", object, size_of(T), type)
+	}
 	return object
 }
 

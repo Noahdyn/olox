@@ -106,7 +106,7 @@ adjust_capacity :: proc(table: ^Table, capacity: int) {
 
 	table.count = 0
 
-	for i := 0; i < table.capacity; i += 1 {
+	for i in 0 ..< table.capacity {
 		entry := table.entries[i]
 		if is_nil(entry.key) do continue
 
@@ -123,7 +123,7 @@ adjust_capacity :: proc(table: ^Table, capacity: int) {
 
 table_add_all :: proc(from, to: ^Table) {
 
-	for i := 0; i < from.capacity; i += 1 {
+	for i in 0 ..< from.capacity {
 
 		entry := from.entries[i]
 		if !is_nil(entry.key) do table_set(to, entry.key, entry.value)

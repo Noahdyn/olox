@@ -465,7 +465,7 @@ resolve_local :: proc(compiler: ^Compiler, name: ^Token) -> int {
 add_upvalue :: proc(compiler: ^Compiler, idx: u8, is_local: bool) -> int {
 	upvalue_count := compiler.function.upvalue_count
 
-	for i := 0; i < upvalue_count; i += 1 {
+	for i in 0 ..< upvalue_count {
 		upvalue := compiler.upvalues[i]
 		if upvalue.idx == idx && upvalue.is_local == is_local do return i
 	}

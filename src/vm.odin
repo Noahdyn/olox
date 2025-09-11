@@ -15,18 +15,22 @@ CallFrame :: struct {
 }
 
 VM :: struct {
-	chunk:          ^Chunk,
+	chunk:           ^Chunk,
 	//instruction pointer
-	ip:             ^u8,
-	stack_capacity: int,
-	frames:         [FRAMES_MAX]CallFrame,
-	frame_count:    int,
-	stack:          [STACK_MAX]Value,
-	stack_top:      int,
-	globals:        Table,
-	strings:        Table,
-	open_upvalues:  ^ObjUpvalue,
-	objects:        ^Obj,
+	ip:              ^u8,
+	stack_capacity:  int,
+	frames:          [FRAMES_MAX]CallFrame,
+	frame_count:     int,
+	stack:           [STACK_MAX]Value,
+	stack_top:       int,
+	globals:         Table,
+	strings:         Table,
+	gray_count:      int,
+	gray_stack:      [dynamic]^Obj,
+	open_upvalues:   ^ObjUpvalue,
+	objects:         ^Obj,
+	bytes_allocated: int,
+	next_gc:         int,
 }
 
 InterpretResult :: enum {
@@ -44,8 +48,9 @@ DEBUG_TRACE_EXECUTION := false
 
 init_VM :: proc() {
 	reset_stack()
-
 	define_native("clock", clock_native)
+	vm.bytes_allocated = 0
+	vm.next_gc = 1024 * 1024
 }
 
 reset_stack :: proc() {
@@ -87,38 +92,6 @@ free_VM :: proc() {
 	free_objects()
 }
 
-free_objects :: proc() {
-	object := vm.objects
-	for object != nil {
-		next := object.next
-		free_object(object)
-		object = next
-	}
-}
-
-free_object :: proc(object: ^Obj) {
-	switch object.type {
-	case .String:
-		o := cast(^ObjString)object
-		delete(o.str)
-		free(o)
-	case .Function:
-		function := cast(^ObjFunction)object
-		free_chunk(&function.chunk)
-		free(function)
-	case .Native:
-		o := cast(^ObjNative)object
-		free(o)
-	case .Closure:
-		o := cast(^ObjClosure)object
-		delete(o.upvalues)
-		free(o)
-	case .Upvalue:
-		o := cast(^Upvalue)object
-		free(o)
-
-	}
-}
 
 interpret :: proc(source: string) -> InterpretResult {
 	function := compile(source)
@@ -375,7 +348,7 @@ run :: proc() -> InterpretResult {
 			function := as_function(read_constant())
 			closure := new_closure(function)
 			push_stack(obj_val(closure))
-			for i := 0; i < len(closure.upvalues); i += 1 {
+			for i in 0 ..< len(closure.upvalues) {
 				is_local := bool(read_byte())
 				idx := read_byte()
 				if is_local {
@@ -398,11 +371,13 @@ run :: proc() -> InterpretResult {
 }
 
 concatenate :: proc() {
-	b := cast(^ObjString)as_obj(pop_stack())
-	a := cast(^ObjString)as_obj(pop_stack())
+	b := cast(^ObjString)as_obj(peek_vm(0))
+	a := cast(^ObjString)as_obj(peek_vm(1))
 	new_string := strings.concatenate({a.str, b.str})
 	hash := hash_string(new_string)
 	result := allocate_string(new_string, hash)
+	pop_stack()
+	pop_stack()
 	push_stack(obj_val(result))
 }
 
