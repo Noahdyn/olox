@@ -3,7 +3,7 @@ package olox
 import "core:fmt"
 
 DEBUG_STRESS_GC :: false
-DEBUG_LOG_GC :: true
+DEBUG_LOG_GC :: false
 GC_HEAP_GROW_FACTOR :: 2
 
 free_objects :: proc() {
@@ -64,6 +64,8 @@ collect_garbage :: proc() {
 	table_remove_white(&vm.strings)
 	sweep()
 
+	vm.mark_bit = !vm.mark_bit
+
 	vm.next_gc = vm.bytes_allocated * GC_HEAP_GROW_FACTOR
 
 	if DEBUG_LOG_GC {
@@ -115,8 +117,7 @@ sweep :: proc() {
 	object := vm.objects
 
 	for object != nil {
-		if object.is_marked {
-			object.is_marked = false
+		if object.is_marked == vm.mark_bit {
 			prev = object
 			object = object.next
 		} else {
@@ -162,14 +163,14 @@ mark_value :: proc(val: Value) {
 
 mark_object :: proc(object: ^Obj) {
 	if object == nil do return
-	if object.is_marked do return
+	if object.is_marked == vm.mark_bit do return
 
 	if DEBUG_LOG_GC {
 		fmt.print("%p mark ", object)
 		print_value(obj_val(object))
 		fmt.println()
 	}
-	object.is_marked = true
+	object.is_marked = vm.mark_bit
 
 	append(&vm.gray_stack, object)
 	vm.gray_count += 1

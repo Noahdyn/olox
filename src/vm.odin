@@ -31,6 +31,7 @@ VM :: struct {
 	objects:         ^Obj,
 	bytes_allocated: int,
 	next_gc:         int,
+	mark_bit:        bool,
 }
 
 InterpretResult :: enum {

@@ -154,8 +154,12 @@ allocate_obj :: proc($T: typeid, type: ObjType) -> ^T {
 	vm.objects = object
 	vm.bytes_allocated += size_of(T)
 
+	if (vm.bytes_allocated > vm.next_gc) {
+		collect_garbage()
+	}
+
 	if DEBUG_LOG_GC {
-		fmt.println("%p allocate %zu for %d", object, size_of(T), type)
+		fmt.println("%p allocate %v for %v", object, size_of(T), type)
 	}
 	return object
 }

@@ -692,7 +692,6 @@ for_statement :: proc() {
 		emit_loop(loop_start)
 		loop_start = increment_start
 		patch_jump(body_jump)
-		fmt.printf("Body jump: %d", body_jump)
 	}
 
 	statement()
