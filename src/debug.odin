@@ -116,6 +116,17 @@ disassemble_instruction :: proc(chunk: ^Chunk, offset: int) -> int {
 		return byte_instruction("OP_SET_UPVALUE", chunk, offset)
 	case .CLOSE_UPVALUE:
 		return simple_instruction("OP_CLOSE_UPVALUE", offset)
+	case .CLASS:
+		return constant_instruction("OP_CLASS", chunk, offset)
+	case .SET_PROPERTY:
+		return constant_instruction("OP_SET_PROPERTY", chunk, offset)
+	case .GET_PROPERTY:
+		return constant_instruction("OP_GET_PROPERTY", chunk, offset)
+	case .GET_PROPERTY_LONG:
+		return long_constant_instruction("OP_GET_PROPERTY_LONG", chunk, offset)
+	case .SET_PROPERTY_LONG:
+		return long_constant_instruction("OP_SET_PROPERTY_LONG", chunk, offset)
+
 	case:
 		fmt.println("Unknown opcode ", instruction)
 		return offset + 1

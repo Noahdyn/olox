@@ -69,7 +69,7 @@ rules: [TokenType]ParseRule = {
 	.LEFT_BRACE    = {nil, nil, .NONE},
 	.RIGHT_BRACE   = {nil, nil, .NONE},
 	.COMMA         = {nil, nil, .NONE},
-	.DOT           = {nil, nil, .NONE},
+	.DOT           = {nil, dot, .CALL},
 	.MINUS         = {unary, binary, .TERM},
 	.PLUS          = {nil, binary, .TERM},
 	.SEMICOLON     = {nil, nil, .NONE},
@@ -403,6 +403,38 @@ call :: proc(can_assign: bool) {
 	emit_bytes(u8(OpCode.CALL), arg_count)
 }
 
+dot :: proc(can_assign: bool) {
+	consume(.IDENTIFIER, "Expect property name after '.'.")
+	name := identifier_constant(&parser.previous)
+
+	if can_assign && match(.EQUAL) {
+		expression()
+		if name <= 255 {
+			emit_bytes(u8(OpCode.SET_PROPERTY), u8(name))
+		} else {
+			byte1 := u8((name >> 16) & 0xFF)
+			byte2 := u8((name >> 8) & 0xFF)
+			byte3 := u8(name & 0xFF)
+			emit_byte(u8(OpCode.SET_PROPERTY_LONG))
+			emit_byte(byte1)
+			emit_byte(byte2)
+			emit_byte(byte3)
+		}
+	} else {
+		if name <= 255 {
+			emit_bytes(u8(OpCode.GET_PROPERTY), u8(name))
+		} else {
+			byte1 := u8((name >> 16) & 0xFF)
+			byte2 := u8((name >> 8) & 0xFF)
+			byte3 := u8(name & 0xFF)
+			emit_byte(u8(OpCode.GET_PROPERTY_LONG))
+			emit_byte(byte1)
+			emit_byte(byte2)
+			emit_byte(byte3)
+		}
+	}
+}
+
 literal :: proc(can_assign: bool) {
 	#partial switch parser.previous.type {
 	case .FALSE:
@@ -634,6 +666,17 @@ function :: proc(type: FunctionType) {
 	}
 }
 
+class_declaration :: proc() {
+	consume(.IDENTIFIER, "Expect class name.")
+	name_constant := identifier_constant(&parser.previous)
+	declare_variable()
+
+	emit_bytes(u8(OpCode.CLASS), u8(name_constant))
+	define_variable(name_constant, false)
+
+	consume(.LEFT_BRACE, "Expect '{' before class body.")
+	consume(.RIGHT_BRACE, "Expect '}' after class body.")
+}
 
 fun_declaration :: proc() {
 	global := parse_variable("Expect function name.")
@@ -803,6 +846,8 @@ synchronize :: proc() {
 declaration :: proc() {
 	if match(.FUN) {
 		fun_declaration()
+	} else if match(.CLASS) {
+		class_declaration()
 	} else if match(.VAR) {
 		var_declaration()
 	} else if match(.FINAL) {

@@ -11,6 +11,8 @@ ObjType :: enum {
 	Closure,
 	Upvalue,
 	Native,
+	Class,
+	Instance,
 }
 
 Obj :: struct {
@@ -37,6 +39,17 @@ ObjClosure :: struct {
 	using obj: Obj,
 	function:  ^ObjFunction,
 	upvalues:  [dynamic]^ObjUpvalue,
+}
+
+ObjClass :: struct {
+	using obj: Obj,
+	name:      ^ObjString,
+}
+
+ObjInstance :: struct {
+	using obj: Obj,
+	class:     ^ObjClass,
+	fields:    Table,
 }
 
 ObjUpvalue :: struct {
@@ -77,6 +90,18 @@ new_native :: proc(function: NativeFn) -> ^ObjNative {
 	return native
 }
 
+new_class :: proc(name: ^ObjString) -> ^ObjClass {
+	class := allocate_obj(ObjClass, .Class)
+	class.name = name
+	return class
+}
+
+new_instance :: proc(class: ^ObjClass) -> ^ObjInstance {
+	instance := allocate_obj(ObjInstance, .Instance)
+	instance.class = class
+	return instance
+}
+
 
 is_string :: #force_inline proc(val: Value) -> bool {
 	return is_obj_type(val, .String)
@@ -98,6 +123,14 @@ is_closure :: #force_inline proc(val: Value) -> bool {
 	return is_obj_type(val, .Closure)
 }
 
+is_class :: #force_inline proc(val: Value) -> bool {
+	return is_obj_type(val, .Class)
+}
+
+is_instance :: #force_inline proc(val: Value) -> bool {
+	return is_obj_type(val, .Instance)
+}
+
 as_function :: #force_inline proc(val: Value) -> ^ObjFunction {
 	return cast(^ObjFunction)(as_obj(val))
 }
@@ -105,6 +138,15 @@ as_function :: #force_inline proc(val: Value) -> ^ObjFunction {
 as_closure :: #force_inline proc(val: Value) -> ^ObjClosure {
 	return cast(^ObjClosure)(as_obj(val))
 }
+
+as_class :: #force_inline proc(val: Value) -> ^ObjClass {
+	return cast(^ObjClass)(as_obj(val))
+}
+
+as_instance :: #force_inline proc(val: Value) -> ^ObjInstance {
+	return cast(^ObjInstance)(as_obj(val))
+}
+
 
 as_native :: #force_inline proc(val: Value) -> NativeFn {
 	return (cast(^ObjNative)(as_obj(val))).function
@@ -168,7 +210,7 @@ print_object :: proc(val: Value) {
 	switch as_obj(val).type {
 	case .String:
 		str_obj := cast(^ObjString)as_obj(val)
-		fmt.printf("%s", str_obj.str)
+		fmt.printf("%v", str_obj.str)
 	case .Function:
 		print_function(as_function(val))
 	case .Native:
@@ -177,5 +219,9 @@ print_object :: proc(val: Value) {
 		fmt.printf("upvalue")
 	case .Closure:
 		print_function(as_closure(val).function)
+	case .Class:
+		fmt.printf("%v", as_class(val).name.str)
+	case .Instance:
+		fmt.printf("%v instance", as_instance(val).class.name.str)
 	}
 }

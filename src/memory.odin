@@ -45,10 +45,19 @@ free_object :: proc(object: ^Obj) {
 		delete(o.upvalues)
 		free(o)
 	case .Upvalue:
-		o := cast(^Upvalue)object
+		o := cast(^ObjUpvalue)object
 		vm.bytes_allocated -= size_of(o)
 		free(o)
-
+	case .Class:
+		o := cast(^ObjClass)object
+		vm.bytes_allocated -= size_of(o)
+		free(o)
+	case .Instance:
+		o := cast(^ObjInstance)object
+		vm.bytes_allocated -= size_of(o)
+		vm.bytes_allocated -= size_of(o.fields)
+		free_table(&o.fields)
+		free(o)
 	}
 }
 
@@ -109,6 +118,13 @@ blacken_object :: proc(object: ^Obj) {
 		for i in 0 ..< len(closure.upvalues) {
 			mark_object(closure.upvalues[i])
 		}
+	case .Class:
+		class := cast(^ObjClass)(object)
+		mark_object(class.name)
+	case .Instance:
+		instance := cast(^ObjInstance)(object)
+		mark_object(instance.class)
+		mark_table(&instance.fields)
 	}
 }
 

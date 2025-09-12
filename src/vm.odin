@@ -367,6 +367,70 @@ run :: proc() -> InterpretResult {
 		case u8(OpCode.CLOSE_UPVALUE):
 			close_upvalues(&vm.stack[vm.stack_top - 1])
 			pop_stack()
+		case u8(OpCode.CLASS):
+			push_stack(obj_val(new_class(read_string())))
+		case u8(OpCode.GET_PROPERTY):
+			if !is_instance(peek_vm(0)) {
+				runtime_error("Only instances have properties.")
+				return .RUNTIME_ERROR
+			}
+			instance := as_instance(peek_vm(0))
+			name := read_string()
+			val, ok := table_get(&instance.fields, obj_val(name))
+			if ok {
+				pop_stack() //instance 
+				push_stack(val)
+				break
+			}
+			runtime_error("Undefined property '%v'.", name.str)
+			return .RUNTIME_ERROR
+		case u8(OpCode.SET_PROPERTY):
+			if !is_instance(peek_vm(1)) {
+				runtime_error("Only instances have properties.")
+				return .RUNTIME_ERROR
+			}
+			instance := as_instance(peek_vm(1))
+			table_set(&instance.fields, obj_val(read_string()), peek_vm(0))
+			val := pop_stack()
+			pop_stack()
+			push_stack(val)
+		case u8(OpCode.GET_PROPERTY_LONG):
+			if !is_instance(peek_vm(0)) {
+				runtime_error("Only instances have properties.")
+				return .RUNTIME_ERROR
+			}
+			byte1 := read_byte()
+			byte2 := read_byte()
+			byte3 := read_byte()
+			name_index := int(byte1) << 16 | int(byte2) << 8 | int(byte3)
+			name := cast(^ObjString)(as_obj(frame.closure.function.chunk.constants[name_index]))
+
+			instance := as_instance(peek_vm(0))
+			val, ok := table_get(&instance.fields, obj_val(name))
+			if ok {
+				pop_stack() // instance 
+				push_stack(val)
+				break
+			}
+			runtime_error("Undefined property '%v'.", name.str)
+			return .RUNTIME_ERROR
+
+		case u8(OpCode.SET_PROPERTY_LONG):
+			byte1 := read_byte()
+			byte2 := read_byte()
+			byte3 := read_byte()
+			name_index := int(byte1) << 16 | int(byte2) << 8 | int(byte3)
+			name := frame.closure.function.chunk.constants[name_index]
+
+			if !is_instance(peek_vm(1)) {
+				runtime_error("Only instances have properties.")
+				return .RUNTIME_ERROR
+			}
+			instance := as_instance(peek_vm(1))
+			table_set(&instance.fields, name, peek_vm(0))
+			val := pop_stack()
+			pop_stack()
+			push_stack(val)
 		}
 	}
 }
@@ -445,6 +509,10 @@ call_value :: proc(callee: Value, arg_count: int) -> bool {
 			return true
 		case .Closure:
 			return call(as_closure(callee), arg_count)
+		case .Class:
+			class := as_class(callee)
+			vm.stack[vm.stack_top - 1 - arg_count] = obj_val(new_instance(class))
+			return true
 		case:
 			break
 
