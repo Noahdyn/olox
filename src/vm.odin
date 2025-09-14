@@ -439,7 +439,31 @@ run :: proc() -> InterpretResult {
 		case u8(OpCode.INVOKE):
 			method := read_string()
 			arg_count := read_byte()
-			if !invoke(method, arg_count) {
+			if !invoke(method, int(arg_count)) {
+				return .RUNTIME_ERROR
+			}
+			frame := &vm.frames[vm.frame_count - 1]
+		case u8(OpCode.INHERIT):
+			superclass := peek_vm(1)
+			if !is_class(superclass) {
+				runtime_error("Superclass must be a class.")
+				return .RUNTIME_ERROR
+			}
+			subclass := as_class(peek_vm(0))
+			table_add_all(&as_class(superclass).methods, &subclass.methods)
+			pop_stack() //subclass
+		case u8(OpCode.GET_SUPER):
+			name := read_string()
+			superclass := as_class(pop_stack())
+
+			if !bind_method(superclass, name) {
+				return .RUNTIME_ERROR
+			}
+		case u8(OpCode.SUPER_INVOKE):
+			method := read_string()
+			arg_count := read_byte()
+			superclass := as_class(pop_stack())
+			if !invoke_from_class(superclass, method, int(arg_count)) {
 				return .RUNTIME_ERROR
 			}
 			frame := &vm.frames[vm.frame_count - 1]

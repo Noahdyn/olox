@@ -130,6 +130,12 @@ disassemble_instruction :: proc(chunk: ^Chunk, offset: int) -> int {
 		return constant_instruction("OP_METHOD", chunk, offset)
 	case .INVOKE:
 		return invoke_instruction("OP_INVOKE", chunk, offset)
+	case .INHERIT:
+		return simple_instruction("OP_INHERIT", offset)
+	case .GET_SUPER:
+		return constant_instruction("OP_GET_SUPER", chunk, offset)
+	case .SUPER_INVOKE:
+		return invoke_instruction("OP_SUPER_INVOKE", chunk, offset)
 	case:
 		fmt.println("Unknown opcode ", instruction)
 		return offset + 1

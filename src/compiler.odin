@@ -47,7 +47,8 @@ Compiler :: struct {
 }
 
 ClassCompiler :: struct {
-	enclosing: ^ClassCompiler,
+	enclosing:       ^ClassCompiler,
+	has_super_class: bool,
 }
 
 Local :: struct {
@@ -104,7 +105,7 @@ rules: [TokenType]ParseRule = {
 	.OR            = {nil, or, .OR},
 	.PRINT         = {nil, nil, .NONE},
 	.RETURN        = {nil, nil, .NONE},
-	.SUPER         = {nil, nil, .NONE},
+	.SUPER         = {super, nil, .NONE},
 	.THIS          = {this, nil, .NONE},
 	.TRUE          = {literal, nil, .NONE},
 	.VAR           = {nil, nil, .NONE},
@@ -260,6 +261,38 @@ string_proc :: proc(can_assign: bool) {
 
 variable :: proc(can_assign: bool) {
 	named_variable(&parser.previous, can_assign)
+}
+
+synthetic_token :: proc(text: string) -> Token {
+	token: Token
+	token.start = raw_data(text)
+	token.length = len(text)
+	return token
+}
+
+super :: proc(can_assign: bool) {
+	if current_class == nil {
+		error("Can't use 'super' outside of a class.")
+	} else if !current_class.has_super_class {
+		error("Can't use 'super' in a class with no superclass.")
+	}
+	consume(.DOT, "Epect '.' after 'super'.")
+	consume(.IDENTIFIER, "Expect superclass method name.")
+	name := identifier_constant(&parser.previous)
+
+	this_token := synthetic_token("this")
+	super_token := synthetic_token("super")
+	named_variable(&this_token, false)
+	//TODO: long op
+	if match(.LEFT_PAREN) {
+		arg_count := argument_list()
+		named_variable(&super_token, false)
+		emit_bytes(u8(OpCode.SUPER_INVOKE), u8(name))
+		emit_byte(arg_count)
+	} else {
+		named_variable(&super_token, false)
+		emit_bytes(u8(OpCode.GET_SUPER), u8(name))
+	}
 }
 
 this :: proc(can_assign: bool) {
@@ -711,6 +744,23 @@ class_declaration :: proc() {
 	class_compiler.enclosing = current_class
 	current_class = &class_compiler
 
+	if match(.LESS) {
+		consume(.IDENTIFIER, "Expect superclass name.")
+		variable(false)
+
+		if identifiers_equal(&class_name, &parser.previous) {
+			error("A class cant inherit from itself.")
+		}
+
+		named_variable(&class_name, false)
+		emit_byte(u8(OpCode.INHERIT))
+		class_compiler.has_super_class = true
+	}
+
+	begin_scope()
+	add_local(synthetic_token("super"))
+	define_variable(0, false)
+
 	named_variable(&class_name, false)
 	consume(.LEFT_BRACE, "Expect '{' before class body.")
 	for !check(.RIGHT_BRACE) && !check(.EOF) {
@@ -718,6 +768,8 @@ class_declaration :: proc() {
 	}
 	consume(.RIGHT_BRACE, "Expect '}' after class body.")
 	emit_byte(u8(OpCode.POP))
+
+	if class_compiler.has_super_class do end_scope()
 
 	current_class = current_class.enclosing
 }
