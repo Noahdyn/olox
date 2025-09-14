@@ -12,6 +12,7 @@ ObjType :: enum {
 	Upvalue,
 	Native,
 	Class,
+	Bound_Method,
 	Instance,
 }
 
@@ -44,12 +45,19 @@ ObjClosure :: struct {
 ObjClass :: struct {
 	using obj: Obj,
 	name:      ^ObjString,
+	methods:   Table,
 }
 
 ObjInstance :: struct {
 	using obj: Obj,
 	class:     ^ObjClass,
 	fields:    Table,
+}
+
+ObjBoundMethod :: struct {
+	using obj: Obj,
+	receiver:  Value,
+	method:    ^ObjClosure,
 }
 
 ObjUpvalue :: struct {
@@ -102,6 +110,13 @@ new_instance :: proc(class: ^ObjClass) -> ^ObjInstance {
 	return instance
 }
 
+new_bound_method :: proc(receiver: Value, method: ^ObjClosure) -> ^ObjBoundMethod {
+	bound := allocate_obj(ObjBoundMethod, .Bound_Method)
+	bound.receiver = receiver
+	bound.method = method
+	return bound
+}
+
 
 is_string :: #force_inline proc(val: Value) -> bool {
 	return is_obj_type(val, .String)
@@ -131,6 +146,10 @@ is_instance :: #force_inline proc(val: Value) -> bool {
 	return is_obj_type(val, .Instance)
 }
 
+is_bound_method :: #force_inline proc(val: Value) -> bool {
+	return is_obj_type(val, .Bound_Method)
+}
+
 as_function :: #force_inline proc(val: Value) -> ^ObjFunction {
 	return cast(^ObjFunction)(as_obj(val))
 }
@@ -147,6 +166,9 @@ as_instance :: #force_inline proc(val: Value) -> ^ObjInstance {
 	return cast(^ObjInstance)(as_obj(val))
 }
 
+as_bound_method :: #force_inline proc(val: Value) -> ^ObjBoundMethod {
+	return cast(^ObjBoundMethod)(as_obj(val))
+}
 
 as_native :: #force_inline proc(val: Value) -> NativeFn {
 	return (cast(^ObjNative)(as_obj(val))).function
@@ -223,5 +245,7 @@ print_object :: proc(val: Value) {
 		fmt.printf("%v", as_class(val).name.str)
 	case .Instance:
 		fmt.printf("%v instance", as_instance(val).class.name.str)
+	case .Bound_Method:
+		print_function(as_bound_method(val).method.function)
 	}
 }

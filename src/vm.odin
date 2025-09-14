@@ -32,6 +32,7 @@ VM :: struct {
 	bytes_allocated: int,
 	next_gc:         int,
 	mark_bit:        bool,
+	init_string:     ^ObjString,
 }
 
 InterpretResult :: enum {
@@ -49,6 +50,7 @@ DEBUG_TRACE_EXECUTION := false
 
 init_VM :: proc() {
 	reset_stack()
+	vm.init_string = copy_string("init")
 	define_native("clock", clock_native)
 	vm.bytes_allocated = 0
 	vm.next_gc = 1024 * 1024
@@ -382,8 +384,9 @@ run :: proc() -> InterpretResult {
 				push_stack(val)
 				break
 			}
-			runtime_error("Undefined property '%v'.", name.str)
-			return .RUNTIME_ERROR
+			if !bind_method(instance.class, name) {
+				return .RUNTIME_ERROR
+			}
 		case u8(OpCode.SET_PROPERTY):
 			if !is_instance(peek_vm(1)) {
 				runtime_error("Only instances have properties.")
@@ -431,6 +434,15 @@ run :: proc() -> InterpretResult {
 			val := pop_stack()
 			pop_stack()
 			push_stack(val)
+		case u8(OpCode.METHOD):
+			define_method(read_string())
+		case u8(OpCode.INVOKE):
+			method := read_string()
+			arg_count := read_byte()
+			if !invoke(method, arg_count) {
+				return .RUNTIME_ERROR
+			}
+			frame := &vm.frames[vm.frame_count - 1]
 		}
 	}
 }
@@ -512,7 +524,18 @@ call_value :: proc(callee: Value, arg_count: int) -> bool {
 		case .Class:
 			class := as_class(callee)
 			vm.stack[vm.stack_top - 1 - arg_count] = obj_val(new_instance(class))
+			initializer, ok := table_get(&class.methods, obj_val(vm.init_string))
+			if ok {
+				return call(as_closure(initializer), arg_count)
+			} else if arg_count != 0 {
+				runtime_error("Expected 0 arguments but got %d", arg_count)
+				return false
+			}
 			return true
+		case .Bound_Method:
+			bound := as_bound_method(callee)
+			vm.stack[vm.stack_top - arg_count - 1] = bound.receiver
+			return call(bound.method, arg_count)
 		case:
 			break
 
@@ -520,6 +543,45 @@ call_value :: proc(callee: Value, arg_count: int) -> bool {
 	}
 	runtime_error("Can only call functions and classes.")
 	return false
+}
+
+invoke :: proc(name: ^ObjString, arg_count: int) -> bool {
+	receiver := peek_vm(arg_count)
+
+	if !is_instance(receiver) {
+		runtime_error("Only instances have methods.")
+		return false
+	}
+	instance := as_instance(receiver)
+	value, ok := table_get(&instance.fields, obj_val(name))
+	if ok {
+		vm.stack[vm.stack_top - arg_count - 1] = value
+		return call_value(value, arg_count)
+	}
+	return invoke_from_class(instance.class, name, arg_count)
+}
+
+invoke_from_class :: proc(class: ^ObjClass, name: ^ObjString, arg_count: int) -> bool {
+	method, ok := table_get(&class.methods, obj_val(name))
+	if !ok {
+		runtime_error("Undefined property '%s'.", name.str)
+		return false
+	}
+	return call(as_closure(method), arg_count)
+
+}
+
+bind_method :: proc(class: ^ObjClass, name: ^ObjString) -> bool {
+	method, ok := table_get(&class.methods, obj_val(name))
+	if !ok {
+		runtime_error("Undefined property '%s'.", name.str)
+		return false
+	}
+
+	bound := new_bound_method(peek_vm(0), as_closure(method))
+	pop_stack()
+	push_stack(obj_val(bound))
+	return true
 }
 
 capture_upvalue :: proc(local: ^Value) -> ^ObjUpvalue {
@@ -552,6 +614,13 @@ close_upvalues :: proc(last: ^Value) {
 		upvalue.location = &upvalue.closed
 		vm.open_upvalues = upvalue.next_upvalue
 	}
+}
+
+define_method :: proc(name: ^ObjString) {
+	method := peek_vm(0)
+	class := as_class(peek_vm(1))
+	table_set(&class.methods, obj_val(name), method)
+	pop_stack()
 }
 
 is_falsey :: proc(val: Value) -> bool {

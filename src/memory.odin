@@ -51,12 +51,17 @@ free_object :: proc(object: ^Obj) {
 	case .Class:
 		o := cast(^ObjClass)object
 		vm.bytes_allocated -= size_of(o)
+		vm.bytes_allocated -= size_of(o.methods)
+		free_table(&o.methods)
 		free(o)
 	case .Instance:
 		o := cast(^ObjInstance)object
 		vm.bytes_allocated -= size_of(o)
 		vm.bytes_allocated -= size_of(o.fields)
 		free_table(&o.fields)
+		free(o)
+	case .Bound_Method:
+		o := cast(^ObjBoundMethod)object
 		free(o)
 	}
 }
@@ -121,10 +126,15 @@ blacken_object :: proc(object: ^Obj) {
 	case .Class:
 		class := cast(^ObjClass)(object)
 		mark_object(class.name)
+		mark_table(&class.methods)
 	case .Instance:
 		instance := cast(^ObjInstance)(object)
 		mark_object(instance.class)
 		mark_table(&instance.fields)
+	case .Bound_Method:
+		bound := cast(^ObjBoundMethod)(object)
+		mark_value(bound.receiver)
+		mark_object(bound.method)
 	}
 }
 
@@ -169,9 +179,19 @@ mark_roots :: proc() {
 	for upvalue := vm.open_upvalues; upvalue != nil; upvalue = upvalue.next_upvalue {
 		mark_object(upvalue)
 	}
-
+	mark_compiler_roots()
+	mark_object(vm.init_string)
 	mark_table(&vm.globals)
 }
+
+mark_compiler_roots :: proc() {
+	compiler := current
+	for compiler != nil {
+		mark_object(compiler.function)
+		compiler = compiler.enclosing
+	}
+}
+
 
 mark_value :: proc(val: Value) {
 	if is_obj(val) do mark_object(as_obj(val))
@@ -208,14 +228,4 @@ table_remove_white :: proc(table: ^Table) {
 			table_delete(table, entry.key)
 		}
 	}
-}
-
-mark_compiler_roots :: proc() {
-	compiler := current
-	for compiler != nil {
-		mark_object(compiler.function)
-		compiler = compiler.enclosing
-	}
-
-
 }

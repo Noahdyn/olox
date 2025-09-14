@@ -41,7 +41,7 @@ hash_value :: proc(val: Value) -> u32 {
 			class_obj := cast(^ObjClass)obj
 			addr := uintptr(class_obj)
 			return u32(addr) ~ u32(addr >> 32)
-		case .Closure, .Upvalue, .Function, .Native:
+		case .Bound_Method, .Closure, .Upvalue, .Function, .Native:
 			error("cannot use functions as hash map keys.")
 		}
 

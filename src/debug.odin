@@ -126,7 +126,10 @@ disassemble_instruction :: proc(chunk: ^Chunk, offset: int) -> int {
 		return long_constant_instruction("OP_GET_PROPERTY_LONG", chunk, offset)
 	case .SET_PROPERTY_LONG:
 		return long_constant_instruction("OP_SET_PROPERTY_LONG", chunk, offset)
-
+	case .METHOD:
+		return constant_instruction("OP_METHOD", chunk, offset)
+	case .INVOKE:
+		return invoke_instruction("OP_INVOKE", chunk, offset)
 	case:
 		fmt.println("Unknown opcode ", instruction)
 		return offset + 1
@@ -167,6 +170,15 @@ constant_instruction :: proc(name: string, chunk: ^Chunk, offset: int) -> int {
 	fmt.printf("'\n")
 
 	return offset + 2
+}
+
+invoke_instruction :: proc(name: string, chunk: ^Chunk, offset: int) -> int {
+	constant := chunk.code[offset + 1]
+	arg_count := chunk.code[offset + 2]
+	fmt.printf("%-16v (%v args) %4v '", name, arg_count, constant)
+	print_value(chunk.constants[constant])
+	fmt.println()
+	return offset + 3
 }
 
 long_constant_instruction :: proc(name: string, chunk: ^Chunk, offset: int) -> int {

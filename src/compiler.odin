@@ -46,6 +46,10 @@ Compiler :: struct {
 	scope_depth: int,
 }
 
+ClassCompiler :: struct {
+	enclosing: ^ClassCompiler,
+}
+
 Local :: struct {
 	name:        Token,
 	depth:       int,
@@ -61,6 +65,8 @@ Upvalue :: struct {
 FunctionType :: enum {
 	FUNCTION,
 	SCRIPT,
+	METHOD,
+	INITIALIZER,
 }
 
 rules: [TokenType]ParseRule = {
@@ -99,7 +105,7 @@ rules: [TokenType]ParseRule = {
 	.PRINT         = {nil, nil, .NONE},
 	.RETURN        = {nil, nil, .NONE},
 	.SUPER         = {nil, nil, .NONE},
-	.THIS          = {nil, nil, .NONE},
+	.THIS          = {this, nil, .NONE},
 	.TRUE          = {literal, nil, .NONE},
 	.VAR           = {nil, nil, .NONE},
 	.WHILE         = {nil, nil, .NONE},
@@ -113,6 +119,7 @@ rules: [TokenType]ParseRule = {
 
 parser: Parser
 current: ^Compiler
+current_class: ^ClassCompiler
 compiling_chunk: ^Chunk
 
 current_chunk :: proc() -> ^Chunk {
@@ -253,6 +260,14 @@ string_proc :: proc(can_assign: bool) {
 
 variable :: proc(can_assign: bool) {
 	named_variable(&parser.previous, can_assign)
+}
+
+this :: proc(can_assign: bool) {
+	if current_class == nil {
+		error("Can't use 'this' outside of a class.")
+		return
+	}
+	variable(false)
 }
 
 named_variable :: proc(name: ^Token, can_assign: bool) {
@@ -420,6 +435,10 @@ dot :: proc(can_assign: bool) {
 			emit_byte(byte2)
 			emit_byte(byte3)
 		}
+	} else if match(.LEFT_PAREN) {
+		arg_count := argument_list()
+		emit_bytes(u8(OpCode.INVOKE), u8(name))
+		emit_byte(arg_count)
 	} else {
 		if name <= 255 {
 			emit_bytes(u8(OpCode.GET_PROPERTY), u8(name))
@@ -666,16 +685,41 @@ function :: proc(type: FunctionType) {
 	}
 }
 
+method :: proc() {
+	consume(.IDENTIFIER, "Expect method name.")
+	constant := identifier_constant(&parser.previous)
+
+	type := FunctionType.METHOD
+	if parser.previous.length == 4 &&
+	   mem.compare(mem.slice_ptr(parser.previous.start, 4), transmute([]u8)string("init")) == 0 {
+		type = .INITIALIZER
+	}
+	function(type)
+	emit_bytes(u8(OpCode.METHOD), u8(constant))
+}
+
 class_declaration :: proc() {
 	consume(.IDENTIFIER, "Expect class name.")
+	class_name := parser.previous
 	name_constant := identifier_constant(&parser.previous)
 	declare_variable()
 
 	emit_bytes(u8(OpCode.CLASS), u8(name_constant))
 	define_variable(name_constant, false)
 
+	class_compiler: ClassCompiler
+	class_compiler.enclosing = current_class
+	current_class = &class_compiler
+
+	named_variable(&class_name, false)
 	consume(.LEFT_BRACE, "Expect '{' before class body.")
+	for !check(.RIGHT_BRACE) && !check(.EOF) {
+		method()
+	}
 	consume(.RIGHT_BRACE, "Expect '}' after class body.")
+	emit_byte(u8(OpCode.POP))
+
+	current_class = current_class.enclosing
 }
 
 fun_declaration :: proc() {
@@ -807,6 +851,9 @@ return_statement :: proc() {
 	if match(.SEMICOLON) {
 		emit_return()
 	} else {
+		if current.type == .INITIALIZER {
+			error("Can't return a value from an initializer.")
+		}
 		expression()
 		consume(.SEMICOLON, "Expect ';' after return statement.")
 		emit_byte(u8(OpCode.RETURN))
@@ -881,7 +928,11 @@ statement :: proc() {
 }
 
 emit_return :: proc() {
-	emit_byte(u8(OpCode.NIL))
+	if current.type == .INITIALIZER {
+		emit_bytes(u8(OpCode.GET_LOCAL), 0)
+	} else {
+		emit_byte(u8(OpCode.NIL))
+	}
 	emit_byte(u8(OpCode.RETURN))
 }
 
@@ -911,9 +962,16 @@ init_compiler :: proc(compiler: ^Compiler, type: FunctionType) {
 		current.function.name = copy_string(string_data)
 	}
 	empty_str := ""
-
+	local := Local {
+		name = Token{start = raw_data(empty_str)},
+	}
+	if type != .FUNCTION {
+		this_str := "this"
+		local.name.start = raw_data(this_str)
+		local.name.length = 4
+	}
 	//reserve local slot for internal use
-	append(&current.locals, Local{name = Token{start = raw_data(empty_str)}})
+	append(&current.locals, local)
 
 
 }
