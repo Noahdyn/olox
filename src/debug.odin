@@ -134,8 +134,12 @@ disassemble_instruction :: proc(chunk: ^Chunk, offset: int) -> int {
 		return simple_instruction("OP_INHERIT", offset)
 	case .GET_SUPER:
 		return constant_instruction("OP_GET_SUPER", chunk, offset)
+	case .GET_SUPER_LONG:
+		return long_constant_instruction("OP_GET_SUPER_LONG", chunk, offset)
 	case .SUPER_INVOKE:
 		return invoke_instruction("OP_SUPER_INVOKE", chunk, offset)
+	case .SUPER_INVOKE_LONG:
+		return long_constant_instruction("OP_SUPER_INVOKE_LONG", chunk, offset)
 	case:
 		fmt.println("Unknown opcode ", instruction)
 		return offset + 1
@@ -160,7 +164,7 @@ long_byte_instruction :: proc(name: string, chunk: ^Chunk, offset: int) -> int {
 	byte3 := chunk.code[offset + 3]
 	slot := int(byte1) << 16 | int(byte2) << 8 | int(byte3)
 	fmt.printf("%-16s %4d\n", name, slot)
-	return offset + 2
+	return offset + 4
 }
 
 byte_instruction :: proc(name: string, chunk: ^Chunk, offset: int) -> int {
@@ -186,6 +190,20 @@ invoke_instruction :: proc(name: string, chunk: ^Chunk, offset: int) -> int {
 	fmt.println()
 	return offset + 3
 }
+
+long_invoke_instruction :: proc(name: string, chunk: ^Chunk, offset: int) -> int {
+	byte1 := chunk.code[offset + 1]
+	byte2 := chunk.code[offset + 2]
+	byte3 := chunk.code[offset + 3]
+	constant := int(byte1) << 16 | int(byte2) << 8 | int(byte3)
+
+	arg_count := chunk.code[offset + 4]
+	fmt.printf("%-16v (%v args) %4v '", name, arg_count, constant)
+	print_value(chunk.constants[constant])
+	fmt.println()
+	return offset + 5
+}
+
 
 long_constant_instruction :: proc(name: string, chunk: ^Chunk, offset: int) -> int {
 	constant_pt1 := chunk.code[offset + 1]

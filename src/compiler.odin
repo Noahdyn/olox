@@ -6,7 +6,6 @@ import "core:strconv"
 import "core:strings"
 
 DEBUG_PRINT_CODE :: false
-
 U8_MAX :: max(u8)
 
 ParseFn :: proc(can_assign: bool)
@@ -226,8 +225,10 @@ end_scope :: proc() {
 		if current.locals[len(current.locals) - 1].is_captured {
 			emit_byte(u8(OpCode.CLOSE_UPVALUE))
 		} else {
-			pop(&current.locals)
+			emit_byte(u8(OpCode.POP))
 		}
+
+		pop(&current.locals)
 	}
 }
 
@@ -276,22 +277,23 @@ super :: proc(can_assign: bool) {
 	} else if !current_class.has_super_class {
 		error("Can't use 'super' in a class with no superclass.")
 	}
-	consume(.DOT, "Epect '.' after 'super'.")
+
+	consume(.DOT, "Expect '.' after 'super'.")
 	consume(.IDENTIFIER, "Expect superclass method name.")
 	name := identifier_constant(&parser.previous)
 
 	this_token := synthetic_token("this")
 	super_token := synthetic_token("super")
 	named_variable(&this_token, false)
-	//TODO: long op
+
 	if match(.LEFT_PAREN) {
 		arg_count := argument_list()
 		named_variable(&super_token, false)
-		emit_bytes(u8(OpCode.SUPER_INVOKE), u8(name))
+		emit_variable_op(u8(OpCode.SUPER_INVOKE), u8(OpCode.SUPER_INVOKE_LONG), name)
 		emit_byte(arg_count)
 	} else {
 		named_variable(&super_token, false)
-		emit_bytes(u8(OpCode.GET_SUPER), u8(name))
+		emit_variable_op(u8(OpCode.GET_SUPER), u8(OpCode.GET_SUPER_LONG), name)
 	}
 }
 
@@ -303,96 +305,51 @@ this :: proc(can_assign: bool) {
 	variable(false)
 }
 
+emit_variable_op :: proc(short_op: u8, long_op: u8, arg: int) {
+	if arg <= 255 {
+		emit_bytes(short_op, u8(arg))
+	} else {
+		byte1 := u8((arg >> 16) & 0xFF)
+		byte2 := u8((arg >> 8) & 0xFF)
+		byte3 := u8(arg & 0xFF)
+		emit_byte(long_op)
+		emit_byte(byte1)
+		emit_byte(byte2)
+		emit_byte(byte3)
+	}
+}
+
 named_variable :: proc(name: ^Token, can_assign: bool) {
-	get_op, get_op_long, set_op, set_op_long: u8
-	arg := resolve_local(current, name)
-
-	//TODO: refactor dieses 3x selber code 
-
-	if arg != -1 {
-		// Local variable
-		get_op = u8(OpCode.GET_LOCAL)
-		set_op = u8(OpCode.SET_LOCAL)
-		set_op_long = u8(OpCode.SET_LOCAL_LONG)
-		get_op_long = u8(OpCode.GET_LOCAL_LONG)
-
+	if arg := resolve_local(current, name); arg != -1 {
 		if can_assign && match(.EQUAL) {
 			if current.locals[arg].final {
 				error("Cannot assign to final variable.")
 				return
 			}
 			expression()
-			// Emit SET instruction
-			if arg <= 255 {
-				emit_bytes(set_op, u8(arg))
-			} else {
-				byte1 := u8((arg >> 16) & 0xFF)
-				byte2 := u8((arg >> 8) & 0xFF)
-				byte3 := u8(arg & 0xFF)
-				emit_byte(set_op_long)
-				emit_byte(byte1)
-				emit_byte(byte2)
-				emit_byte(byte3)
-			}
+			emit_variable_op(u8(OpCode.SET_LOCAL), u8(OpCode.SET_LOCAL_LONG), arg)
 		} else {
-			// Emit GET instruction
-			if arg <= 255 {
-				emit_bytes(get_op, u8(arg))
-			} else {
-				byte1 := u8((arg >> 16) & 0xFF)
-				byte2 := u8((arg >> 8) & 0xFF)
-				byte3 := u8(arg & 0xFF)
-				emit_byte(get_op_long)
-				emit_byte(byte1)
-				emit_byte(byte2)
-				emit_byte(byte3)
-			}
+			emit_variable_op(u8(OpCode.GET_LOCAL), u8(OpCode.GET_LOCAL_LONG), arg)
 		}
-	} else if uvarg := resolve_upvalue(current, name); uvarg != -1 {
-		set_op = u8(OpCode.SET_UPVALUE)
-		get_op = u8(OpCode.GET_UPVALUE)
+		return
+	}
 
-		if can_assign && match(.EQUAL) {
-			emit_bytes(set_op, u8(uvarg))
-		} else {
-			emit_bytes(get_op, u8(uvarg))
-		}
-	} else {
-		// Global variable
-		arg = identifier_constant(name)
-		get_op = u8(OpCode.GET_GLOBAL)
-		set_op = u8(OpCode.SET_GLOBAL)
-		set_op_long = u8(OpCode.SET_GLOBAL_LONG)
-		get_op_long = u8(OpCode.GET_GLOBAL_LONG)
-
+	if uvarg := resolve_upvalue(current, name); uvarg != -1 {
 		if can_assign && match(.EQUAL) {
 			expression()
-			// Emit SET instruction
-			if arg <= 255 {
-				emit_bytes(set_op, u8(arg))
-			} else {
-				byte1 := u8((arg >> 16) & 0xFF)
-				byte2 := u8((arg >> 8) & 0xFF)
-				byte3 := u8(arg & 0xFF)
-				emit_byte(set_op_long)
-				emit_byte(byte1)
-				emit_byte(byte2)
-				emit_byte(byte3)
-			}
+			emit_bytes(u8(OpCode.SET_UPVALUE), u8(uvarg))
 		} else {
-			// Emit GET instruction
-			if arg <= 255 {
-				emit_bytes(get_op, u8(arg))
-			} else {
-				byte1 := u8((arg >> 16) & 0xFF)
-				byte2 := u8((arg >> 8) & 0xFF)
-				byte3 := u8(arg & 0xFF)
-				emit_byte(get_op_long)
-				emit_byte(byte1)
-				emit_byte(byte2)
-				emit_byte(byte3)
-			}
+			emit_bytes(u8(OpCode.GET_UPVALUE), u8(uvarg))
 		}
+		return
+	}
+
+	arg := identifier_constant(name)
+	if can_assign && match(.EQUAL) {
+		expression()
+		emit_variable_op(u8(OpCode.SET_GLOBAL), u8(OpCode.SET_GLOBAL_LONG), arg)
+	} else {
+		emit_variable_op(u8(OpCode.GET_GLOBAL), u8(OpCode.GET_GLOBAL_LONG), arg)
 	}
 }
 
@@ -752,14 +709,15 @@ class_declaration :: proc() {
 			error("A class cant inherit from itself.")
 		}
 
+
+		begin_scope()
+		add_local(synthetic_token("super"))
+		define_variable(0, false)
+
 		named_variable(&class_name, false)
 		emit_byte(u8(OpCode.INHERIT))
 		class_compiler.has_super_class = true
 	}
-
-	begin_scope()
-	add_local(synthetic_token("super"))
-	define_variable(0, false)
 
 	named_variable(&class_name, false)
 	consume(.LEFT_BRACE, "Expect '{' before class body.")

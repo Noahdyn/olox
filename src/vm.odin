@@ -7,6 +7,7 @@ import "core:time"
 
 FRAMES_MAX :: 64
 STACK_MAX :: FRAMES_MAX * 256
+DEBUG_TRACE_EXECUTION := false
 
 CallFrame :: struct {
 	closure: ^ObjClosure,
@@ -16,7 +17,6 @@ CallFrame :: struct {
 
 VM :: struct {
 	chunk:           ^Chunk,
-	//instruction pointer
 	ip:              ^u8,
 	stack_capacity:  int,
 	frames:          [FRAMES_MAX]CallFrame,
@@ -45,8 +45,6 @@ vm: VM
 clock_native :: proc(arg_count: int, args: []Value) -> Value {
 	return number_val(f64(time.now()._nsec))
 }
-
-DEBUG_TRACE_EXECUTION := false
 
 init_VM :: proc() {
 	reset_stack()
@@ -133,10 +131,10 @@ run :: proc() -> InterpretResult {
 			}
 			fmt.printf("\n")
 		}
-		instruction := read_byte()
+		instruction := cast(OpCode)read_byte()
 
 		switch (instruction) {
-		case u8(OpCode.RETURN):
+		case .RETURN:
 			res := pop_stack()
 			close_upvalues(&frame.slots[0])
 			vm.frame_count -= 1
@@ -144,28 +142,25 @@ run :: proc() -> InterpretResult {
 				pop_stack()
 				return .OK
 			}
-			vm.stack_top = len(vm.stack) - len(frame.slots)
+			vm.stack_top -= frame.closure.function.arity + 1
 
 			push_stack(res)
 			frame = &vm.frames[vm.frame_count - 1]
-		case u8(OpCode.CONSTANT):
+		case .CONSTANT:
 			constant := read_constant()
 			push_stack(constant)
-		case u8(OpCode.CONSTANT_LONG):
-			byte1 := read_byte()
-			byte2 := read_byte()
-			byte3 := read_byte()
-			constant_index := int(byte1) << 16 | int(byte2) << 8 | int(byte3)
+		case .CONSTANT_LONG:
+			constant_index := read_24bit()
 			constant := vm.chunk.constants[constant_index]
 			push_stack(constant)
-		case u8(OpCode.NEGATE):
-			last_elem := &vm.stack[len(vm.stack) - 1]
+		case .NEGATE:
+			last_elem := &vm.stack[vm.stack_top - 1]
 			if !is_number(last_elem^) {
 				runtime_error("Operand must be a number.")
 				return .RUNTIME_ERROR
 			}
 			last_elem^ = number_val(-as_number(last_elem^))
-		case u8(OpCode.ADD):
+		case .ADD:
 			if is_string(peek_vm(0)) && is_string(peek_vm(1)) {
 				concatenate()
 			} else if is_number(peek_vm(0)) && is_number(peek_vm(1)) {
@@ -178,7 +173,7 @@ run :: proc() -> InterpretResult {
 				runtime_error("Operands must be numbers.")
 				return .RUNTIME_ERROR
 			}
-		case u8(OpCode.SUBTRACT):
+		case .SUBTRACT:
 			if !is_number(peek_vm(0)) || !is_number(peek_vm(1)) {
 				runtime_error("Operands must be numbers.")
 				return .RUNTIME_ERROR
@@ -186,7 +181,7 @@ run :: proc() -> InterpretResult {
 			b := as_number(pop_stack())
 			a := as_number(pop_stack())
 			push_stack(number_val(a - b))
-		case u8(OpCode.MULTIPLY):
+		case .MULTIPLY:
 			if !is_number(peek_vm(0)) || !is_number(peek_vm(1)) {
 				runtime_error("Operands must be numbers.")
 				return .RUNTIME_ERROR
@@ -194,7 +189,7 @@ run :: proc() -> InterpretResult {
 			b := as_number(pop_stack())
 			a := as_number(pop_stack())
 			push_stack(number_val(a * b))
-		case u8(OpCode.DIVIDE):
+		case .DIVIDE:
 			if !is_number(peek_vm(0)) || !is_number(peek_vm(1)) {
 				runtime_error("Operands must be numbers.")
 				return .RUNTIME_ERROR
@@ -202,24 +197,24 @@ run :: proc() -> InterpretResult {
 			b := as_number(pop_stack())
 			a := as_number(pop_stack())
 			push_stack(number_val(a / b))
-		case u8(OpCode.NIL):
+		case .NIL:
 			push_stack(nil_val())
-		case u8(OpCode.TRUE):
+		case .TRUE:
 			push_stack(bool_val(true))
-		case u8(OpCode.FALSE):
+		case .FALSE:
 			push_stack(bool_val(false))
-		case u8(OpCode.NOT):
-			last_elem := &vm.stack[len(vm.stack) - 1]
+		case .NOT:
+			last_elem := &vm.stack[vm.stack_top - 1]
 			if !is_bool(last_elem^) {
 				runtime_error("Operand must be boolean.")
 				return .RUNTIME_ERROR
 			}
 			last_elem^ = bool_val(is_falsey(last_elem^))
-		case u8(OpCode.EQUAL):
+		case .EQUAL:
 			b := pop_stack()
 			a := pop_stack()
 			push_stack(bool_val(values_equal(a, b)))
-		case u8(OpCode.GREATER):
+		case .GREATER:
 			if !is_number(peek_vm(0)) || !is_number(peek_vm(1)) {
 				runtime_error("Operands must be numbers.")
 				return .RUNTIME_ERROR
@@ -227,7 +222,7 @@ run :: proc() -> InterpretResult {
 			b := as_number(pop_stack())
 			a := as_number(pop_stack())
 			push_stack(bool_val(a > b))
-		case u8(OpCode.LESS):
+		case .LESS:
 			if !is_number(peek_vm(0)) || !is_number(peek_vm(1)) {
 				runtime_error("Operands must be numbers.")
 				return .RUNTIME_ERROR
@@ -235,40 +230,34 @@ run :: proc() -> InterpretResult {
 			b := as_number(pop_stack())
 			a := as_number(pop_stack())
 			push_stack(bool_val(a < b))
-		case u8(OpCode.PRINT):
+		case .PRINT:
 			print_value(pop_stack())
 			fmt.println()
-		case u8(OpCode.POP):
+		case .POP:
 			pop_stack()
-		case u8(OpCode.DEFINE_GLOBAL):
+		case .DEFINE_GLOBAL:
 			name := read_constant()
 			table_set(&vm.globals, name, peek_vm(0))
 			pop_stack()
-		case u8(OpCode.DEFINE_GLOBAL_FINAL):
+		case .DEFINE_GLOBAL_FINAL:
 			name := read_constant()
 			val := peek_vm(0)
 			val.final = true
 			table_set(&vm.globals, name, val)
 			pop_stack()
-		case u8(OpCode.DEFINE_GLOBAL_LONG):
-			byte1 := read_byte()
-			byte2 := read_byte()
-			byte3 := read_byte()
-			name_index := int(byte1) << 16 | int(byte2) << 8 | int(byte3)
+		case .DEFINE_GLOBAL_LONG:
+			name_index := read_24bit()
 			name := vm.chunk.constants[name_index]
 			table_set(&vm.globals, name, peek_vm(0))
 			pop_stack()
-		case u8(OpCode.DEFINE_GLOBAL_FINAL_LONG):
-			byte1 := read_byte()
-			byte2 := read_byte()
-			byte3 := read_byte()
-			name_index := int(byte1) << 16 | int(byte2) << 8 | int(byte3)
+		case .DEFINE_GLOBAL_FINAL_LONG:
+			name_index := read_24bit()
 			name := vm.chunk.constants[name_index]
 			val := peek_vm(0)
 			val.final = true
 			table_set(&vm.globals, name, val)
 			pop_stack()
-		case u8(OpCode.GET_GLOBAL):
+		case .GET_GLOBAL:
 			key := read_constant()
 			value, ok := table_get(&vm.globals, key)
 			if !ok {
@@ -276,11 +265,8 @@ run :: proc() -> InterpretResult {
 				return .RUNTIME_ERROR
 			}
 			push_stack(value)
-		case u8(OpCode.GET_GLOBAL_LONG):
-			byte1 := read_byte()
-			byte2 := read_byte()
-			byte3 := read_byte()
-			key_index := int(byte1) << 16 | int(byte2) << 8 | int(byte3)
+		case .GET_GLOBAL_LONG:
+			key_index := read_24bit()
 			key := vm.chunk.constants[key_index]
 			value, ok := table_get(&vm.globals, key)
 			if !ok {
@@ -288,7 +274,7 @@ run :: proc() -> InterpretResult {
 				return .RUNTIME_ERROR
 			}
 			push_stack(value)
-		case u8(OpCode.SET_GLOBAL):
+		case .SET_GLOBAL:
 			key := read_constant()
 			val, found := table_get(&vm.globals, key)
 			if !found {
@@ -303,12 +289,8 @@ run :: proc() -> InterpretResult {
 				return .RUNTIME_ERROR
 			}
 			table_set(&vm.globals, key, peek_vm(0))
-		case u8(OpCode.SET_GLOBAL_LONG):
-			//TODO: byte1-3 lesen zu einer procedure machen
-			byte1 := read_byte()
-			byte2 := read_byte()
-			byte3 := read_byte()
-			key_index := int(byte1) << 16 | int(byte2) << 8 | int(byte3)
+		case .SET_GLOBAL_LONG:
+			key_index := read_24bit()
 			key := vm.chunk.constants[key_index]
 			val, found := table_get(&vm.globals, key)
 			if !found {
@@ -323,31 +305,37 @@ run :: proc() -> InterpretResult {
 				return .RUNTIME_ERROR
 			}
 			table_set(&vm.globals, key, peek_vm(0))
-		case u8(OpCode.JUMP_IF_FALSE):
+		case .JUMP_IF_FALSE:
 			offset := read_short()
 			if is_falsey(peek_vm(0)) do frame.ip += int(offset)
-		case u8(OpCode.JUMP):
+		case .JUMP:
 			offset := read_short()
 			frame.ip += int(offset)
-		case u8(OpCode.GET_LOCAL):
+		case .GET_LOCAL:
 			slot := read_byte()
 			push_stack(frame.slots[slot])
-		case u8(OpCode.SET_LOCAL):
+		case .GET_LOCAL_LONG:
+			slot_bytes := read_24bit()
+			push_stack(frame.slots[slot_bytes])
+		case .SET_LOCAL:
 			slot := read_byte()
 			frame.slots[slot] = peek_vm(0)
-		case u8(OpCode.LOOP):
+		case .SET_LOCAL_LONG:
+			slot_bytes := read_24bit()
+			frame.slots[slot_bytes] = peek_vm(0)
+		case .LOOP:
 			offset := read_short()
 			frame.ip -= int(offset)
-		case u8(OpCode.DUPLICATE):
+		case .DUPLICATE:
 			val := peek_vm(0)
 			push_stack(val)
-		case u8(OpCode.CALL):
+		case .CALL:
 			arg_count := read_byte()
 			if !call_value(peek_vm(int(arg_count)), int(arg_count)) {
 				return .RUNTIME_ERROR
 			}
 			frame = &vm.frames[vm.frame_count - 1]
-		case u8(OpCode.CLOSURE):
+		case .CLOSURE:
 			function := as_function(read_constant())
 			closure := new_closure(function)
 			push_stack(obj_val(closure))
@@ -360,18 +348,18 @@ run :: proc() -> InterpretResult {
 					closure.upvalues[i] = frame.closure.upvalues[idx]
 				}
 			}
-		case u8(OpCode.GET_UPVALUE):
+		case .GET_UPVALUE:
 			slot := read_byte()
 			push_stack(frame.closure.upvalues[slot].location^)
-		case u8(OpCode.SET_UPVALUE):
+		case .SET_UPVALUE:
 			slot := read_byte()
 			frame.closure.upvalues[slot].location^ = peek_vm(0)
-		case u8(OpCode.CLOSE_UPVALUE):
+		case .CLOSE_UPVALUE:
 			close_upvalues(&vm.stack[vm.stack_top - 1])
 			pop_stack()
-		case u8(OpCode.CLASS):
+		case .CLASS:
 			push_stack(obj_val(new_class(read_string())))
-		case u8(OpCode.GET_PROPERTY):
+		case .GET_PROPERTY:
 			if !is_instance(peek_vm(0)) {
 				runtime_error("Only instances have properties.")
 				return .RUNTIME_ERROR
@@ -387,7 +375,7 @@ run :: proc() -> InterpretResult {
 			if !bind_method(instance.class, name) {
 				return .RUNTIME_ERROR
 			}
-		case u8(OpCode.SET_PROPERTY):
+		case .SET_PROPERTY:
 			if !is_instance(peek_vm(1)) {
 				runtime_error("Only instances have properties.")
 				return .RUNTIME_ERROR
@@ -397,15 +385,12 @@ run :: proc() -> InterpretResult {
 			val := pop_stack()
 			pop_stack()
 			push_stack(val)
-		case u8(OpCode.GET_PROPERTY_LONG):
+		case .GET_PROPERTY_LONG:
 			if !is_instance(peek_vm(0)) {
 				runtime_error("Only instances have properties.")
 				return .RUNTIME_ERROR
 			}
-			byte1 := read_byte()
-			byte2 := read_byte()
-			byte3 := read_byte()
-			name_index := int(byte1) << 16 | int(byte2) << 8 | int(byte3)
+			name_index := read_24bit()
 			name := cast(^ObjString)(as_obj(frame.closure.function.chunk.constants[name_index]))
 
 			instance := as_instance(peek_vm(0))
@@ -418,11 +403,8 @@ run :: proc() -> InterpretResult {
 			runtime_error("Undefined property '%v'.", name.str)
 			return .RUNTIME_ERROR
 
-		case u8(OpCode.SET_PROPERTY_LONG):
-			byte1 := read_byte()
-			byte2 := read_byte()
-			byte3 := read_byte()
-			name_index := int(byte1) << 16 | int(byte2) << 8 | int(byte3)
+		case .SET_PROPERTY_LONG:
+			name_index := read_24bit()
 			name := frame.closure.function.chunk.constants[name_index]
 
 			if !is_instance(peek_vm(1)) {
@@ -434,16 +416,16 @@ run :: proc() -> InterpretResult {
 			val := pop_stack()
 			pop_stack()
 			push_stack(val)
-		case u8(OpCode.METHOD):
+		case .METHOD:
 			define_method(read_string())
-		case u8(OpCode.INVOKE):
+		case .INVOKE:
 			method := read_string()
 			arg_count := read_byte()
 			if !invoke(method, int(arg_count)) {
 				return .RUNTIME_ERROR
 			}
-			frame := &vm.frames[vm.frame_count - 1]
-		case u8(OpCode.INHERIT):
+			frame = &vm.frames[vm.frame_count - 1]
+		case .INHERIT:
 			superclass := peek_vm(1)
 			if !is_class(superclass) {
 				runtime_error("Superclass must be a class.")
@@ -452,21 +434,38 @@ run :: proc() -> InterpretResult {
 			subclass := as_class(peek_vm(0))
 			table_add_all(&as_class(superclass).methods, &subclass.methods)
 			pop_stack() //subclass
-		case u8(OpCode.GET_SUPER):
+		case .GET_SUPER:
 			name := read_string()
 			superclass := as_class(pop_stack())
 
 			if !bind_method(superclass, name) {
 				return .RUNTIME_ERROR
 			}
-		case u8(OpCode.SUPER_INVOKE):
+		case .GET_SUPER_LONG:
+			name_index := read_24bit()
+			name := cast(^ObjString)(as_obj(frame.closure.function.chunk.constants[name_index]))
+			superclass := as_class(pop_stack())
+
+			if !bind_method(superclass, name) {
+				return .RUNTIME_ERROR
+			}
+		case .SUPER_INVOKE:
 			method := read_string()
 			arg_count := read_byte()
 			superclass := as_class(pop_stack())
 			if !invoke_from_class(superclass, method, int(arg_count)) {
 				return .RUNTIME_ERROR
 			}
-			frame := &vm.frames[vm.frame_count - 1]
+			frame = &vm.frames[vm.frame_count - 1]
+		case .SUPER_INVOKE_LONG:
+			name_index := read_24bit()
+			name := cast(^ObjString)(as_obj(frame.closure.function.chunk.constants[name_index]))
+			arg_count := read_byte()
+			superclass := as_class(pop_stack())
+			if !invoke_from_class(superclass, name, int(arg_count)) {
+				return .RUNTIME_ERROR
+			}
+			frame = &vm.frames[vm.frame_count - 1]
 		}
 	}
 }
@@ -487,6 +486,14 @@ read_byte :: #force_inline proc() -> u8 {
 	byte := frame.closure.function.chunk.code[frame.ip]
 	frame.ip += 1
 	return byte
+}
+
+read_24bit :: #force_inline proc() -> int {
+	byte1 := read_byte()
+	byte2 := read_byte()
+	byte3 := read_byte()
+	res := int(byte1) << 16 | int(byte2) << 8 | int(byte3)
+	return res
 }
 
 read_constant :: #force_inline proc() -> Value {
