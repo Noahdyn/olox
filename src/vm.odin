@@ -242,8 +242,8 @@ run :: proc() -> InterpretResult {
 		case .DEFINE_GLOBAL_FINAL:
 			name := read_constant()
 			val := peek_vm(0)
-			val.final = true
-			table_set(&vm.globals, name, val)
+			final_val := make_final(val)
+			table_set(&vm.globals, name, final_val)
 			pop_stack()
 		case .DEFINE_GLOBAL_LONG:
 			name_index := read_24bit()
@@ -254,8 +254,8 @@ run :: proc() -> InterpretResult {
 			name_index := read_24bit()
 			name := vm.chunk.constants[name_index]
 			val := peek_vm(0)
-			val.final = true
-			table_set(&vm.globals, name, val)
+			final_val := make_final(val)
+			table_set(&vm.globals, name, final_val)
 			pop_stack()
 		case .GET_GLOBAL:
 			key := read_constant()
@@ -281,7 +281,7 @@ run :: proc() -> InterpretResult {
 				runtime_error("Undefined variable '%s'.", (cast(^ObjString)as_obj(key)).str)
 				return .RUNTIME_ERROR
 			}
-			if val.final {
+			if is_final(val) {
 				runtime_error(
 					"Cannot assign to final variable '%s'.",
 					(cast(^ObjString)as_obj(key)).str,
@@ -297,7 +297,7 @@ run :: proc() -> InterpretResult {
 				runtime_error("Undefined variable '%s'.", (cast(^ObjString)as_obj(key)).str)
 				return .RUNTIME_ERROR
 			}
-			if val.final {
+			if is_final(val) {
 				runtime_error(
 					"Cannot assign to final variable '%s'.",
 					(cast(^ObjString)as_obj(key)).str,
@@ -656,20 +656,4 @@ define_method :: proc(name: ^ObjString) {
 
 is_falsey :: proc(val: Value) -> bool {
 	return is_nil(val) || (is_bool(val) && !as_bool(val))
-}
-
-values_equal :: proc(a, b: Value) -> bool {
-	if a.type != b.type do return false
-	#partial switch a.type {
-	case .BOOL:
-		return as_bool(a) == as_bool(b)
-	case .NIL:
-		return true
-	case .NUMBER:
-		return as_number(a) == as_number(b)
-	case .OBJ:
-		return as_obj(a) == as_obj(b)
-	case:
-		return false // Unreachable.
-	}
 }

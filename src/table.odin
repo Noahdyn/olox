@@ -23,34 +23,57 @@ free_table :: proc(table: ^Table) {
 }
 
 hash_value :: proc(val: Value) -> u32 {
-	switch val.type {
-	case .NIL:
-		return 0
-	case .BOOL:
-		return u32(1) if as_bool(val) else u32(0)
-	case .NUMBER:
-		bits := transmute(u64)as_number(val)
-		return u32(bits) ~ u32(bits >> 32)
-	case .OBJ:
-		obj := as_obj(val)
-		switch obj.type {
-		case .String:
-			str_obj := cast(^ObjString)obj
-			return str_obj.hash
-		case .Class, .Instance:
-			class_obj := cast(^ObjClass)obj
-			addr := uintptr(class_obj)
-			return u32(addr) ~ u32(addr >> 32)
-		case .Bound_Method, .Closure, .Upvalue, .Function, .Native:
-			error("cannot use functions as hash map keys.")
+	when NAN_BOXING {
+		if is_nil(val) {
+			return 0
+		} else if is_bool(val) {
+			return u32(1) if as_bool(val) else u32(0)
+		} else if is_number(val) {
+			bits := transmute(u64)as_number(val)
+			return u32(bits) ~ u32(bits >> 32)
+		} else if is_obj(val) {
+			obj := as_obj(val)
+			switch obj.type {
+			case .String:
+				str_obj := cast(^ObjString)obj
+				return str_obj.hash
+			case .Class, .Instance:
+				class_obj := cast(^ObjClass)obj
+				addr := uintptr(class_obj)
+				return u32(addr) ~ u32(addr >> 32)
+			case .Bound_Method, .Closure, .Upvalue, .Function, .Native:
+				error("cannot use functions as hash map keys.")
+			}
 		}
-
+	} else {
+		switch val.type {
+		case .NIL:
+			return 0
+		case .BOOL:
+			return u32(1) if as_bool(val) else u32(0)
+		case .NUMBER:
+			bits := transmute(u64)as_number(val)
+			return u32(bits) ~ u32(bits >> 32)
+		case .OBJ:
+			obj := as_obj(val)
+			switch obj.type {
+			case .String:
+				str_obj := cast(^ObjString)obj
+				return str_obj.hash
+			case .Class, .Instance:
+				class_obj := cast(^ObjClass)obj
+				addr := uintptr(class_obj)
+				return u32(addr) ~ u32(addr >> 32)
+			case .Bound_Method, .Closure, .Upvalue, .Function, .Native:
+				error("cannot use functions as hash map keys.")
+			}
+		}
 	}
 	return 0
 }
 
 find_entry :: proc(entries: []Entry, capacity: int, key: Value) -> ^Entry {
-	idx := int(hash_value(key)) % capacity
+	idx := int(hash_value(key)) & (capacity - 1)
 	tombstone: ^Entry = nil
 
 	for {
@@ -67,7 +90,7 @@ find_entry :: proc(entries: []Entry, capacity: int, key: Value) -> ^Entry {
 		} else if values_equal(entry.key, key) {
 			return entry
 		}
-		idx = (idx + 1) % capacity
+		idx = (idx + 1) & (capacity - 1)
 	}
 }
 
@@ -136,7 +159,7 @@ table_add_all :: proc(from, to: ^Table) {
 
 table_find_string :: proc(table: ^Table, str: string, hash: u32) -> ^ObjString {
 	if table.count == 0 do return nil
-	idx := hash % u32(table.capacity)
+	idx := hash & u32(table.capacity - 1)
 	for {
 		entry := table.entries[idx]
 		if is_nil(entry.key) {
@@ -149,7 +172,7 @@ table_find_string :: proc(table: ^Table, str: string, hash: u32) -> ^ObjString {
 				return str_obj
 			}
 		}
-		idx = (idx + 1) % u32(table.capacity)
+		idx = (idx + 1) & u32(table.capacity - 1)
 	}
 }
 
