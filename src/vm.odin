@@ -7,7 +7,7 @@ import "core:time"
 
 FRAMES_MAX :: 64
 STACK_MAX :: FRAMES_MAX * 256
-DEBUG_TRACE_EXECUTION := false
+DEBUG_TRACE_EXECUTION :: false
 
 CallFrame :: struct {
 	closure: ^ObjClosure,
@@ -47,11 +47,12 @@ clock_native :: proc(arg_count: int, args: []Value) -> Value {
 }
 
 init_VM :: proc() {
+	vm.bytes_allocated = 0
+	vm.next_gc = 1024 * 1024
+
 	reset_stack()
 	vm.init_string = copy_string("init")
 	define_native("clock", clock_native)
-	vm.bytes_allocated = 0
-	vm.next_gc = 1024 * 1024
 }
 
 reset_stack :: proc() {
@@ -82,7 +83,7 @@ runtime_error :: proc(format: string, args: ..any) {
 define_native :: proc(name: string, function: NativeFn) {
 	push_stack(obj_val(copy_string(name)))
 	push_stack(obj_val(new_native(function)))
-	table_set(&vm.globals, vm.stack[0], vm.stack[1])
+	ok := table_set(&vm.globals, vm.stack[0], vm.stack[1])
 	pop_stack()
 	pop_stack()
 }
@@ -132,7 +133,6 @@ run :: proc() -> InterpretResult {
 			fmt.printf("\n")
 		}
 		instruction := cast(OpCode)read_byte()
-
 		switch (instruction) {
 		case .RETURN:
 			res := pop_stack()
@@ -142,7 +142,7 @@ run :: proc() -> InterpretResult {
 				pop_stack()
 				return .OK
 			}
-			vm.stack_top -= frame.closure.function.arity + 1
+			vm.stack_top = int(uintptr(&frame.slots[0]) - uintptr(&vm.stack[0])) / size_of(Value)
 
 			push_stack(res)
 			frame = &vm.frames[vm.frame_count - 1]
@@ -205,10 +205,6 @@ run :: proc() -> InterpretResult {
 			push_stack(bool_val(false))
 		case .NOT:
 			last_elem := &vm.stack[vm.stack_top - 1]
-			if !is_bool(last_elem^) {
-				runtime_error("Operand must be boolean.")
-				return .RUNTIME_ERROR
-			}
 			last_elem^ = bool_val(is_falsey(last_elem^))
 		case .EQUAL:
 			b := pop_stack()
@@ -239,23 +235,10 @@ run :: proc() -> InterpretResult {
 			name := read_constant()
 			table_set(&vm.globals, name, peek_vm(0))
 			pop_stack()
-		case .DEFINE_GLOBAL_FINAL:
-			name := read_constant()
-			val := peek_vm(0)
-			final_val := make_final(val)
-			table_set(&vm.globals, name, final_val)
-			pop_stack()
 		case .DEFINE_GLOBAL_LONG:
 			name_index := read_24bit()
 			name := vm.chunk.constants[name_index]
 			table_set(&vm.globals, name, peek_vm(0))
-			pop_stack()
-		case .DEFINE_GLOBAL_FINAL_LONG:
-			name_index := read_24bit()
-			name := vm.chunk.constants[name_index]
-			val := peek_vm(0)
-			final_val := make_final(val)
-			table_set(&vm.globals, name, final_val)
 			pop_stack()
 		case .GET_GLOBAL:
 			key := read_constant()
@@ -281,13 +264,6 @@ run :: proc() -> InterpretResult {
 				runtime_error("Undefined variable '%s'.", (cast(^ObjString)as_obj(key)).str)
 				return .RUNTIME_ERROR
 			}
-			if is_final(val) {
-				runtime_error(
-					"Cannot assign to final variable '%s'.",
-					(cast(^ObjString)as_obj(key)).str,
-				)
-				return .RUNTIME_ERROR
-			}
 			table_set(&vm.globals, key, peek_vm(0))
 		case .SET_GLOBAL_LONG:
 			key_index := read_24bit()
@@ -295,13 +271,6 @@ run :: proc() -> InterpretResult {
 			val, found := table_get(&vm.globals, key)
 			if !found {
 				runtime_error("Undefined variable '%s'.", (cast(^ObjString)as_obj(key)).str)
-				return .RUNTIME_ERROR
-			}
-			if is_final(val) {
-				runtime_error(
-					"Cannot assign to final variable '%s'.",
-					(cast(^ObjString)as_obj(key)).str,
-				)
 				return .RUNTIME_ERROR
 			}
 			table_set(&vm.globals, key, peek_vm(0))
@@ -616,7 +585,7 @@ bind_method :: proc(class: ^ObjClass, name: ^ObjString) -> bool {
 }
 
 capture_upvalue :: proc(local: ^Value) -> ^ObjUpvalue {
-	prev_upvalue: ^ObjUpvalue = nil
+	prev_upvalue: ^ObjUpvalue
 	upvalue := vm.open_upvalues
 
 	for upvalue != nil && upvalue.location > local {
@@ -628,6 +597,7 @@ capture_upvalue :: proc(local: ^Value) -> ^ObjUpvalue {
 		return upvalue
 	}
 	created_upvalue := new_upvalue(local)
+	created_upvalue.next_upvalue = upvalue
 
 	if prev_upvalue == nil {
 		vm.open_upvalues = created_upvalue

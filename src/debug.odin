@@ -76,10 +76,6 @@ disassemble_instruction :: proc(chunk: ^Chunk, offset: int) -> int {
 		return long_byte_instruction("OP_GET_LOCAL_LONG", chunk, offset)
 	case .GET_LOCAL:
 		return byte_instruction("OP_GET_LOCAL", chunk, offset)
-	case .DEFINE_GLOBAL_FINAL:
-		return constant_instruction("OP_DEFINE_GLOBAL_FINAL", chunk, offset)
-	case .DEFINE_GLOBAL_FINAL_LONG:
-		return long_constant_instruction("OP_DEFINE_GLOBAL_FINAL_LONG", chunk, offset)
 	case .JUMP:
 		return jump_instruction("OP_JUMP", 1, chunk, offset)
 	case .JUMP_IF_FALSE:

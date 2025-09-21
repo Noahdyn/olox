@@ -37,12 +37,13 @@ ParseRule :: struct {
 }
 
 Compiler :: struct {
-	enclosing:   ^Compiler,
-	function:    ^ObjFunction,
-	type:        FunctionType,
-	locals:      [dynamic]Local,
-	upvalues:    [U8_MAX]Upvalue,
-	scope_depth: int,
+	enclosing:    ^Compiler,
+	function:     ^ObjFunction,
+	type:         FunctionType,
+	locals:       [dynamic]Local,
+	upvalues:     [U8_MAX]Upvalue,
+	scope_depth:  int,
+	final_locals: map[string]bool,
 }
 
 ClassCompiler :: struct {
@@ -121,6 +122,8 @@ parser: Parser
 current: ^Compiler
 current_class: ^ClassCompiler
 compiling_chunk: ^Chunk
+final_globals: map[string]bool
+
 
 current_chunk :: proc() -> ^Chunk {
 	return &current.function.chunk
@@ -227,7 +230,6 @@ end_scope :: proc() {
 		} else {
 			emit_byte(u8(OpCode.POP))
 		}
-
 		pop(&current.locals)
 	}
 }
@@ -322,7 +324,9 @@ emit_variable_op :: proc(short_op: u8, long_op: u8, arg: int) {
 named_variable :: proc(name: ^Token, can_assign: bool) {
 	if arg := resolve_local(current, name); arg != -1 {
 		if can_assign && match(.EQUAL) {
-			if current.locals[arg].final {
+			// Check if this local is final
+			local_name := string(mem.slice_ptr(name.start, name.length))
+			if current.final_locals[local_name] {
 				error("Cannot assign to final variable.")
 				return
 			}
@@ -336,6 +340,7 @@ named_variable :: proc(name: ^Token, can_assign: bool) {
 
 	if uvarg := resolve_upvalue(current, name); uvarg != -1 {
 		if can_assign && match(.EQUAL) {
+			// Note: You'd need to handle upvalue finality if you want to support it
 			expression()
 			emit_bytes(u8(OpCode.SET_UPVALUE), u8(uvarg))
 		} else {
@@ -346,6 +351,12 @@ named_variable :: proc(name: ^Token, can_assign: bool) {
 
 	arg := identifier_constant(name)
 	if can_assign && match(.EQUAL) {
+		// Check if this global is final
+		global_name := string(mem.slice_ptr(name.start, name.length))
+		if final_globals[global_name] {
+			error("Cannot assign to final variable.")
+			return
+		}
 		expression()
 		emit_variable_op(u8(OpCode.SET_GLOBAL), u8(OpCode.SET_GLOBAL_LONG), arg)
 	} else {
@@ -578,30 +589,26 @@ mark_initialized :: proc() {
 
 define_variable :: proc(global: int, final: bool) {
 	if current.scope_depth > 0 {
+		if final {
+			local_name := string(
+				mem.slice_ptr(
+					current.locals[len(current.locals) - 1].name.start,
+					current.locals[len(current.locals) - 1].name.length,
+				),
+			)
+			current.final_locals[local_name] = true
+		}
 		mark_initialized()
 		return
 	}
 
-	define_op, define_op_long: u8
 	if final {
-		define_op = u8(OpCode.DEFINE_GLOBAL_FINAL)
-		define_op_long = u8(OpCode.DEFINE_GLOBAL_FINAL_LONG)
-	} else {
-		define_op = u8(OpCode.DEFINE_GLOBAL)
-		define_op_long = u8(OpCode.DEFINE_GLOBAL_LONG)
+		name_value := current_chunk().constants[global]
+		name_string := (cast(^ObjString)as_obj(name_value)).str
+		final_globals[name_string] = true
 	}
 
-	if global <= 255 {
-		emit_bytes(define_op, u8(global))
-	} else {
-		byte1 := u8((global >> 16) & 0xFF)
-		byte2 := u8((global >> 8) & 0xFF)
-		byte3 := u8(global & 0xFF)
-		emit_byte(define_op_long)
-		emit_byte(byte1)
-		emit_byte(byte2)
-		emit_byte(byte3)
-	}
+	emit_variable_op(u8(OpCode.DEFINE_GLOBAL), u8(OpCode.DEFINE_GLOBAL_LONG), global)
 }
 
 argument_list :: proc() -> u8 {
@@ -807,12 +814,15 @@ if_statement :: proc() {
 	consume(.LEFT_PAREN, "Expect '(' after 'if'.")
 	expression()
 	consume(.RIGHT_PAREN, "Expect ')' after condition.")
+
 	then_jump := emit_jump(u8(OpCode.JUMP_IF_FALSE))
+	emit_byte(u8(OpCode.POP))
 	statement()
 
 	else_jump := emit_jump(u8(OpCode.JUMP))
 
 	patch_jump(then_jump)
+	emit_byte(u8(OpCode.POP))
 
 	if match(.ELSE) do statement()
 	patch_jump(else_jump)
@@ -967,6 +977,12 @@ init_compiler :: proc(compiler: ^Compiler, type: FunctionType) {
 	compiler.function = new_function()
 	current = compiler
 
+	compiler.final_locals = make(map[string]bool)
+
+	if type == .SCRIPT && final_globals == nil {
+		final_globals = make(map[string]bool)
+	}
+
 	if type != .SCRIPT {
 		string_data := string(mem.slice_ptr(parser.previous.start, parser.previous.length))
 		current.function.name = copy_string(string_data)
@@ -987,7 +1003,13 @@ init_compiler :: proc(compiler: ^Compiler, type: FunctionType) {
 }
 
 free_compiler :: proc(compiler: ^Compiler) {
+	delete(compiler.final_locals)
 	delete(compiler.locals)
+
+	if compiler.type == .SCRIPT && final_globals != nil {
+		delete(final_globals)
+		final_globals = nil
+	}
 }
 
 error_at_current :: proc(msg: string) {

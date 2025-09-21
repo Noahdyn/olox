@@ -183,5 +183,6 @@ table_get :: proc(table: ^Table, key: Value) -> (Value, bool) {
 	if is_nil(entry.key) do return nil_val(), false
 
 	value := entry.value
+
 	return value, true
 }

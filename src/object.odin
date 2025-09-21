@@ -88,6 +88,7 @@ new_closure :: proc(function: ^ObjFunction) -> ^ObjClosure {
 
 new_upvalue :: proc(slot: ^Value) -> ^ObjUpvalue {
 	upvalue := allocate_obj(ObjUpvalue, .Upvalue)
+	upvalue.closed = nil_val()
 	upvalue.location = slot
 	return upvalue
 }

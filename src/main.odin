@@ -6,7 +6,7 @@ import "core:os"
 import "core:strings"
 import "core:time"
 
-NAN_BOXING :: #config(NAN_BOXING, true)
+NAN_BOXING :: #config(NAN_BOXING, false)
 
 main :: proc() {
 	init_VM()

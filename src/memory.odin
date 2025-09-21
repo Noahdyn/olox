@@ -216,7 +216,7 @@ mark_object :: proc(object: ^Obj) {
 mark_table :: proc(table: ^Table) {
 	for i in 0 ..< table.capacity {
 		entry := table.entries[i]
-		mark_object(as_obj(entry.key))
+		mark_value(entry.key)
 		mark_value(entry.value)
 	}
 }

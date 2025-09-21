@@ -7,7 +7,6 @@ when NAN_BOXING {
 
 	SIGN_BIT: u64 : 0x8000000000000000
 	QNAN: u64 : 0x7ffc000000000000
-	FINAL_BIT: u64 : 0x0002000000000000
 
 	TAG_NIL :: 1
 	TAG_FALSE :: 2
@@ -16,69 +15,42 @@ when NAN_BOXING {
 	FALSE_VAL: u64 : QNAN | TAG_FALSE
 	TRUE_VAL: u64 : QNAN | TAG_TRUE
 
-	number_val :: #force_inline proc(num: f64, final: bool = false) -> Value {
-		val := transmute(u64)num
-		if final {
-			if val & SIGN_BIT == 0 {
-				val |= FINAL_BIT
-			}
-		}
-		return transmute(Value)val
+	number_val :: #force_inline proc(num: f64) -> Value {
+		return transmute(Value)transmute(u64)num
 	}
-	nil_val :: #force_inline proc(final: bool = false) -> Value {
-		val := QNAN | TAG_NIL
-		if final do val |= FINAL_BIT
-		return transmute(Value)val
+	nil_val :: #force_inline proc() -> Value {
+		return transmute(Value)(QNAN | TAG_NIL)
 	}
-	bool_val :: #force_inline proc(b: bool, final: bool = false) -> Value {
-		val := b ? TRUE_VAL : FALSE_VAL
-		if final do val |= FINAL_BIT
-		return Value(val)
+	bool_val :: #force_inline proc(b: bool) -> Value {
+		return Value(b ? TRUE_VAL : FALSE_VAL)
 	}
-	obj_val :: #force_inline proc(obj: ^Obj, final: bool = false) -> Value {
+	obj_val :: #force_inline proc(obj: ^Obj) -> Value {
 		val := SIGN_BIT | QNAN | cast(u64)uintptr(obj)
-		if final do val |= FINAL_BIT
 		return Value(val)
 	}
 
 	is_number :: #force_inline proc(val: Value) -> bool {return (u64(val) & QNAN) != QNAN}
 	is_nil :: #force_inline proc(val: Value) -> bool {
-		return (u64(val) & ~FINAL_BIT) == (QNAN | TAG_NIL)
+		return u64(val) == (QNAN | TAG_NIL)
 	}
 	is_bool :: #force_inline proc(val: Value) -> bool {
-		return ((u64(val) & ~FINAL_BIT) | 1) == TRUE_VAL
+		return (u64(val) | 1) == TRUE_VAL
 	}
 
 	is_obj :: #force_inline proc(val: Value) -> bool {return(
 			(u64(val) & (QNAN | SIGN_BIT)) ==
 			(QNAN | SIGN_BIT) \
 		)}
-	is_final :: #force_inline proc(val: Value) -> bool {
-		if is_number(val) {
-			raw := u64(val)
-			if raw & FINAL_BIT != 0 {
-				original := raw & ~FINAL_BIT
-				return (transmute(f64)original >= 0) || (raw & SIGN_BIT == 0)
-			}
-			return false
-		} else {
-			return (u64(val) & FINAL_BIT) != 0
-		}
-	}
 
 	as_bool :: #force_inline proc(val: Value) -> bool {
-		return (u64(val) & ~FINAL_BIT) == TRUE_VAL
+		return u64(val) == TRUE_VAL
 	}
 	as_obj :: #force_inline proc(val: Value) -> ^Obj {
-		return cast(^Obj)uintptr(u64(val) & ~(SIGN_BIT | QNAN | FINAL_BIT))
+		return cast(^Obj)uintptr(u64(val) & ~(SIGN_BIT | QNAN))
 	}
 
 	as_number :: #force_inline proc(val: Value) -> f64 {
-		raw := u64(val)
-		if raw & FINAL_BIT != 0 {
-			raw &= ~FINAL_BIT
-		}
-		return transmute(f64)raw
+		return transmute(f64)val
 	}
 
 	print_value :: proc(val: Value) {
@@ -91,19 +63,14 @@ when NAN_BOXING {
 		} else if (is_obj(val)) {
 			print_object(val)
 		}
-
-		if is_final(val) {
-			fmt.printf(" (final)")
-		}
 	}
 
 	values_equal :: proc(a, b: Value) -> bool {
 		if (is_number(a) && is_number(b)) {
 			return as_number(a) == as_number(b)
 		}
-		return (u64(a) & ~FINAL_BIT) == (u64(b) & ~FINAL_BIT)
+		return u64(a) == u64(b)
 	}
-
 
 } else {
 	ValueType :: enum {
@@ -115,7 +82,6 @@ when NAN_BOXING {
 
 	Value :: struct {
 		type:    ValueType,
-		final:   bool,
 		variant: union {
 			bool,
 			f64,
@@ -123,16 +89,17 @@ when NAN_BOXING {
 		},
 	}
 
-	number_val :: #force_inline proc(val: f64, final: bool = false) -> Value {
-		return Value{.NUMBER, final, val}}
-	nil_val :: #force_inline proc(final: bool = false) -> Value {
-		return Value{.NIL, final, 0}
+	number_val :: #force_inline proc(val: f64) -> Value {
+		return Value{.NUMBER, val}
 	}
-	bool_val :: #force_inline proc(val: bool, final: bool = false) -> Value {
-		return Value{.BOOL, final, val}
+	nil_val :: #force_inline proc() -> Value {
+		return Value{.NIL, 0}
 	}
-	obj_val :: #force_inline proc(object: ^Obj, final: bool = false) -> Value {
-		return Value{.OBJ, final, object}
+	bool_val :: #force_inline proc(val: bool) -> Value {
+		return Value{.BOOL, val}
+	}
+	obj_val :: #force_inline proc(object: ^Obj) -> Value {
+		return Value{.OBJ, object}
 	}
 
 	is_number :: #force_inline proc(val: Value) -> bool {
@@ -146,9 +113,6 @@ when NAN_BOXING {
 	}
 	is_obj :: #force_inline proc(val: Value) -> bool {
 		return val.type == .OBJ
-	}
-	is_final :: #force_inline proc(val: Value) -> bool {
-		return val.final
 	}
 
 	as_bool :: #force_inline proc(val: Value) -> bool {
@@ -189,28 +153,4 @@ when NAN_BOXING {
 			return false // Unreachable.
 		}
 	}
-
-
-}
-
-make_final :: proc(val: Value) -> Value {
-	if is_final(val) do return val
-
-	when NAN_BOXING {
-		if is_number(val) {
-			return number_val(as_number(val), final = true)
-		} else if is_bool(val) {
-			return bool_val(as_bool(val), final = true)
-		} else if is_nil(val) {
-			return nil_val(final = true)
-		} else if is_obj(val) {
-			return obj_val(as_obj(val), final = true)
-		}
-	} else {
-		result := val
-		result.final = true
-		return result
-	}
-
-	return val // Fallback, shouldn't happen
 }

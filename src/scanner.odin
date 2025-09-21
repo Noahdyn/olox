@@ -139,7 +139,7 @@ scan_token :: proc() -> Token {
 	case '*':
 		return make_token(.STAR)
 	case '!':
-		return make_token(match('=') ? .BANG_EQUAL : .EQUAL)
+		return make_token(match('=') ? .BANG_EQUAL : .BANG)
 	case '=':
 		return make_token(match('=') ? .EQUAL_EQUAL : .EQUAL)
 	case '<':
