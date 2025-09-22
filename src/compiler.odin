@@ -323,9 +323,8 @@ emit_variable_op :: proc(short_op: u8, long_op: u8, arg: int) {
 
 named_variable :: proc(name: ^Token, can_assign: bool) {
 	if arg := resolve_local(current, name); arg != -1 {
+		local_name := string(mem.slice_ptr(name.start, name.length))
 		if can_assign && match(.EQUAL) {
-			// Check if this local is final
-			local_name := string(mem.slice_ptr(name.start, name.length))
 			if current.final_locals[local_name] {
 				error("Cannot assign to final variable.")
 				return
@@ -340,7 +339,6 @@ named_variable :: proc(name: ^Token, can_assign: bool) {
 
 	if uvarg := resolve_upvalue(current, name); uvarg != -1 {
 		if can_assign && match(.EQUAL) {
-			// Note: You'd need to handle upvalue finality if you want to support it
 			expression()
 			emit_bytes(u8(OpCode.SET_UPVALUE), u8(uvarg))
 		} else {
@@ -350,9 +348,8 @@ named_variable :: proc(name: ^Token, can_assign: bool) {
 	}
 
 	arg := identifier_constant(name)
+	global_name := string(mem.slice_ptr(name.start, name.length))
 	if can_assign && match(.EQUAL) {
-		// Check if this global is final
-		global_name := string(mem.slice_ptr(name.start, name.length))
 		if final_globals[global_name] {
 			error("Cannot assign to final variable.")
 			return
@@ -579,6 +576,8 @@ parse_variable :: proc(error_msg: string, final: bool = false) -> int {
 		return 0
 	}
 
+	global_name := string(mem.slice_ptr(parser.previous.start, parser.previous.length))
+
 	return identifier_constant(&parser.previous)
 }
 
@@ -597,6 +596,7 @@ define_variable :: proc(global: int, final: bool) {
 				),
 			)
 			current.final_locals[local_name] = true
+
 		}
 		mark_initialized()
 		return

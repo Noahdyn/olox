@@ -1,0 +1,6 @@
+switch ("foo") {
+	case "foo":
+		print "foo"; // expect: foo
+	case "bar":
+		print "bar";
+}
